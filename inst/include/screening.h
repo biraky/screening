@@ -79,7 +79,7 @@ namespace screening {
       for (i=0; i<fulln && ti[i]<t; i++) {
 	tj.push_back(ti[i]);
       }
-      offset = (i+1==fulln && ti[i+1]==t) ? 1 : 0;
+      offset = (i+1==fulln && ti[i]==t) ? 1 : 0;
       tj.push_back(t);
       n = tj.size()-2; // number of episodes (excluding the last episode if time equals t)
     }
@@ -250,8 +250,12 @@ namespace screening {
 	  out[i] = this->X(t) + this->Y(t);
 	} 
 	else if (type == 2) {  // Screen-detected cancer: P_Y(t-) * (1 - beta)
+	  if (this->fulln > 0) {
 	  out[i] = this->Y(t-eps) * (1 - PrFalseNeg(yi[this->n-1]));
-	} 
+	  } else {
+	    out[i] = 0.0; // no screening ==> no screen detected cancer
+	  }
+	}
 	else if (type == 3) {  // Interval cancer: I(t)
 	  out[i] = this->I(t);
 	} 
