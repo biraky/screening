@@ -96,8 +96,9 @@ namespace screening {
       if (reset) setup(t);
       double value = 0.0;
       for (size_t i=0; i<=n; i++) {
+        double K = prod_beta(i, n+offset);
 	// For onset between tj[i] to tj[i+1] with false negative tests through to the end of follow-up
-	auto fn = [&](double x) { return f1(x)*S2(t-x) * prod_beta(i, n+offset); };
+	auto fn = [&](double x) { return f1(x)*S2(t-x)*K; };
 	value += gauss_kronrod<double, 15>::integrate(fn, tj[i], tj[i+1], 5, tol, &error);
       }
       return value;
@@ -107,7 +108,8 @@ namespace screening {
       if (reset) setup(t);
       double value = 0.0;
       for (size_t i=0; i<=n; i++) {
-	auto fn = [&](double x) { return f1(x)*f2(t-x)*prod_beta(i, n+offset); };
+        double K = prod_beta(i, n+offset);
+	auto fn = [&](double x) { return f1(x)*f2(t-x)*K; };
 	value += gauss_kronrod<double, 15>::integrate(fn, tj[i], tj[i+1], 5, tol, &error);
       }
       return value;
@@ -120,8 +122,9 @@ namespace screening {
       // cumulative incidence
       for (size_t i=0; i<=n; i++) { // index for onset interval 
 	for (size_t j=i; j<=n; j++) { // index for clinical diagnosis
-	  auto fn = [&](double s) { 
-	    auto inner = [&](double u) { return f1(s)*prod_beta(i,j)*f2(u-s); };
+	  double K = prod_beta(i,j);
+	  auto fn = [&](double s) {
+	    auto inner = [&](double u) { return f1(s)*K*f2(u-s); };
 	    return gauss_kronrod<double, 15>::integrate(inner, std::max(s,tj[j]),
 							tj[j+1], 5, tol, &error2);
 	  };
@@ -131,7 +134,8 @@ namespace screening {
       // screen-detected
       for (size_t i=0; i<=n; i++) { // i: index for onset interval
 	for (size_t j=i+1; j<=n+offset; j++) { // j: index for clinical diagnosis
-	  auto fn = [&](double u) { return f1(u)*S2(tj[j]-u)*prod_beta(i,j,true); };
+	  double K = prod_beta(i,j,true);
+	  auto fn = [&](double u) { return f1(u)*S2(tj[j]-u)*K; };
 	  value += gauss_kronrod<double, 15>::integrate(fn, tj[i], tj[i+1], 5, tol, &error);
 	}
       }
@@ -301,8 +305,10 @@ namespace screening {
       if (reset) this->setup(s);
       double value = this->S1(s)*prod_bx(0,this->n);
       for (size_t i=0; i<=this->n; i++) {
+        // move outside the integration; independent of x
+        double K = prod_bx(0,i) * prod_beta(i,this->n);
 	auto fn = [&](double x) {
-	  return this->f1(x)*this->S2(s-x) * prod_bx(0,i) * prod_beta(i,this->n);
+	  return this->f1(x)*this->S2(s-x) * K;
 	};
 	value += gauss_kronrod<double, 15>::integrate(fn, this->tj[i], this->tj[i+1],
 						      5, this->tol, &this->error);
@@ -314,9 +320,10 @@ namespace screening {
       if (reset) this->setup(t);
       double value = 0.0;
       for (size_t i=0; i<=this->n; i++) {
+        // move outside the integration
+        double K = prod_bx(0,i) * prod_beta(i,this->n+this->offset,true);
 	auto fn = [&](double x) {
-	  return this->f1(x)*this->S2(t-x)*prod_bx(0,i)*
-	    prod_beta(i,this->n+this->offset,true); 
+	  return this->f1(x)*this->S2(t-x)*K;
 	};
 	value += gauss_kronrod<double, 15>::integrate(fn, this->tj[i], this->tj[i+1], 5, this->tol, &this->error);
       }
@@ -327,8 +334,10 @@ namespace screening {
       if (reset) this->setup(t);
       double value = 0.0;
       for (size_t i=0; i<=this->n; i++) {
+        // move outside the integration
+        double K = prod_bx(0,i)*prod_beta(i,this->n+this->offset);
 	auto fn = [&](double x) {
-	  return this->f1(x)*this->f2(t-x)*prod_bx(0,i)*prod_beta(i,this->n+this->offset);
+	  return this->f1(x)*this->f2(t-x)*K;
 	};
 	value += gauss_kronrod<double, 15>::integrate(fn, this->tj[i], this->tj[i+1], 5, this->tol, &this->error);
       }
