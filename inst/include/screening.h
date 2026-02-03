@@ -4,6 +4,7 @@
 // [[Rcpp::depends(BH)]]
 #include <Rcpp.h>
 #include <boost/math/quadrature/gauss_kronrod.hpp>
+#include <omp.h>
 
 namespace screening {
 
@@ -87,6 +88,12 @@ namespace screening {
       this->ti=ti;
       fulln=ti.size();
     }
+    // new overload using pointers; for openmp
+    void update(const double* ti_ptr, size_t n_ti) {
+      this->ti.assign(ti_ptr, ti_ptr + n_ti);
+      fulln = n_ti;
+    }
+    
     double X(double t, bool reset = true) {
       if (reset) setup(t);
       return S1(t);
@@ -279,17 +286,33 @@ namespace screening {
     std::vector<int> bxi; // biopsy indicator
     T5 PrNoBx;
     double PrFalseNegBx;
+    
+
+    
     ScreeningModel3(T1 f1, T2 S1, T3 f2, T4 S2,
 		    T5 PrNoBx,
 		    double PrFalseNegBx,
 		    double tol = 1e-6) :
       AbstractScreeningModel<T1,T2,T3,T4>(f1,S1,f2,S2,tol),
       PrNoBx(PrNoBx), PrFalseNegBx(PrFalseNegBx) { }
+    
     void update(std::vector<double> ti, std::vector<double> yi, std::vector<int> bxi) {
       AbstractScreeningModel<T1,T2,T3,T4>::update(ti);
       this->yi=yi;
       this->bxi=bxi;
     }
+    
+    // overload for update using pointers; 
+    // basically we need this to avoid creating temporary vectors and 
+    // memory allocation inside the big loop in the likes calculation
+    void update(const double* ti_ptr, size_t ti_n, 
+                const double* yi_ptr, size_t yi_n, 
+                const int* bxi_ptr, size_t bxi_n) {
+      AbstractScreeningModel<T1,T2,T3,T4>::update(ti_ptr, ti_n);
+      this->yi.assign(yi_ptr, yi_ptr + yi_n);
+      this->bxi.assign(bxi_ptr, bxi_ptr + bxi_n);
+    }
+    
     double prod_bx(size_t i, size_t j) {
       double value = 1.0;
       // reminder: yi[k] is not zero-padded => represents a test at tj[k+1]==ti[k]
@@ -349,35 +372,80 @@ namespace screening {
     }
     // Which test characteristic should be used if t==t_j?
     // Should this be a different input?
-    std::vector<double> likes(Rcpp::List inputs, double eps=1.0e-12) {
-      using Rcpp::as;
-      std::vector<double> out(inputs.size());
-      for (int i = 0; i < inputs.size(); i++) {
-	Rcpp::List input = inputs(i);
-	double t = as<double>(input("t"));
-	int type = as<int>(input("type"));
-	update(as<std::vector<double>>(input("ti")),
-	       as<std::vector<double>>(input("yi")),
-	       as<std::vector<int>>(input("bxi")));
-	// Calculate the likelihood contribution for this observation
-	if (type == 1) {  // No cancer detected: P_X(t) + P_Y(t)
-	  out[i] = like_neg_screening(t);
-	} 
-	else if (type == 2) {  // Screen-detected cancer: P_Y(t-) * (1 - beta)
-	  out[i] = like_screen_detected_cancer(t);
-	} 
-	else if (type == 3) {  // Interval cancer: I(t)
-	  out[i] = like_interval_cancer(t);
-	} 
-	else {
-	  out[i] = -1.0;  // Invalid type
-	}
-	if (i % 10 == 0) {
-	  R_CheckUserInterrupt();  // Check if user hit Ctrl-C to stop execution
-	}
-      }
-      return out;
+    std::vector<double> likes(Rcpp::List inputs, double eps=1.0e-12) override {
+      return likes(inputs, eps, "", {}); 
     }
+
+    // TODO: ideally add weighted likelihood for all models; 
+    // this overload will do for now
+    std::vector<double> likes(Rcpp::List inputs, double eps=1.0e-12,
+                              std::string return_type = "",
+                              std::vector<double> weights = {}) {
+      bool weighted_ll = return_type == "weighted_ll";
+      
+      struct SubjectData {
+        double t;
+        int type;
+        std::vector<double> ti; 
+        std::vector<double> yi; 
+        std::vector<int> bxi; 
+      };
+      
+      size_t n_obs = inputs.size();
+      
+      if(!weights.empty() && weights.size() != n_obs) {
+        Rcpp::stop("The size of weights must be equal to the size of inputs.");
+      }
+      
+      std::vector<SubjectData> data(n_obs);
+      std::vector<double> out(n_obs);
+      
+      // unpack from Rcpp
+      for(size_t i = 0; i < n_obs; ++i) {
+        
+        Rcpp::List subject = inputs[i];
+        
+        data[i].t = Rcpp::as<double>(subject["t"]);
+        
+        data[i].type = Rcpp::as<int>(subject["type"]);
+        
+        if(data[i].type >3) {
+          Rcpp::stop("Only 3 screen types are supported");
+        }
+        
+        data[i].ti = Rcpp::as<std::vector<double>>(subject["ti"]);
+        data[i].yi = Rcpp::as<std::vector<double>>(subject["yi"]);
+        data[i].bxi = Rcpp::as<std::vector<int>>(subject["bxi"]);
+      }
+      
+    #pragma omp parallel 
+{
+  // copy of the model for each thread
+  ScreeningModel3 local_model = *this;
+  
+#pragma omp for schedule(static)
+  for (int i = 0; i < (int)n_obs; i++) {
+    
+    // reminder this is new overloaded update that needs pointer, thus .data()
+    local_model.update(data[i].ti.data(), data[i].ti.size(), 
+                       data[i].yi.data(), data[i].yi.size(),
+                       data[i].bxi.data(), data[i].bxi.size());
+    
+    if (data[i].type == 1) {
+      out[i] = local_model.like_neg_screening(data[i].t);
+    } else if (data[i].type == 2) { 
+      out[i] = local_model.like_screen_detected_cancer(data[i].t);
+    } else if (data[i].type == 3) { 
+      out[i] = local_model.like_interval_cancer(data[i].t);
+    }
+    
+    if(weighted_ll) out[i] = weights[i]*std::log(out[i]);
+  }
+}
+
+return out;
+    }
+    
   };
   
 } // end of namespace screening

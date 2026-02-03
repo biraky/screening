@@ -123,9 +123,11 @@ screening_model_3_predictions <- function(t, ti, yi, bxi, shape1 = 1, scale1 = 1
 #' @param beta1 slope of log(yi) for logistic model for false negative fraction
 #' @param PrFalseNegBx probability of a false negative biopsy | cancer, biopsy undertaken
 #' @param tol double for the numeric tolerance of the integration (default=1e-6)
-#' @return vector of likelihoods
+#' @param return_type string, if "weighted_ll" returns sum of weighted log-likelihoods (default "")
+#' @param weights vector of weights corresponding to inputs, required if return_type is "weighted_ll"
+#' @return vector of likelihoods (or vector of length 1 containing weighted log-likelihood sum)
 #' @export
-screening_model_3_likes <- function(inputs, shape1 = 1.0, scale1 = 1.0, shape2 = 1.0, scale2 = 1.0, beta0 = -3.0, beta1 = 1.0, PrFalseNegBx = 0.05, tol = 1e-6) {
-    .Call('_screening_screening_model_3_likes', PACKAGE = 'screening', inputs, shape1, scale1, shape2, scale2, beta0, beta1, PrFalseNegBx, tol)
+screening_model_3_likes <- function(inputs, shape1 = 1.0, scale1 = 1.0, shape2 = 1.0, scale2 = 1.0, beta0 = -3.0, beta1 = 1.0, PrFalseNegBx = 0.05, tol = 1e-6, return_type = "", weights = NULL) {
+    .Call('_screening_screening_model_3_likes', PACKAGE = 'screening', inputs, shape1, scale1, shape2, scale2, beta0, beta1, PrFalseNegBx, tol, return_type, weights)
 }
 

@@ -197,6 +197,17 @@ screening_model_3_predictions(std::vector<double> t,
   return m.predictions(t,simple);
 }
 
+// these will end up inside openmp loop; same parametrisation like in R
+auto dweibull = [](double x, double shape, double scale) {
+  if (x < 0) return 0.0;
+  double xl = x / scale;
+  return (shape / scale) * std::pow(xl, shape - 1.0) * std::exp(-std::pow(xl, shape));
+};
+auto sweibull = [](double x, double shape, double scale) {
+  if (x < 0) return 1.0;
+  return std::exp(-std::pow(x / scale, shape));
+};
+
 //' Do likelihood calculations for ScreeningModel3
 //' @name ScreeningModel3
 //' @param inputs list of list with elements of t for the evaluation time, tj for the screening times and type for the type of likelihood (1=No cancer detected, 2=Screen-detected cancer, 3=Interval cancer)
@@ -208,7 +219,9 @@ screening_model_3_predictions(std::vector<double> t,
 //' @param beta1 slope of log(yi) for logistic model for false negative fraction
 //' @param PrFalseNegBx probability of a false negative biopsy | cancer, biopsy undertaken
 //' @param tol double for the numeric tolerance of the integration (default=1e-6)
-//' @return vector of likelihoods
+//' @param return_type string, if "weighted_ll" returns sum of weighted log-likelihoods (default "")
+//' @param weights vector of weights corresponding to inputs, required if return_type is "weighted_ll"
+//' @return vector of likelihoods (or vector of length 1 containing weighted log-likelihood sum)
 //' @export
 // [[Rcpp::export]]
 std::vector<double>
@@ -220,13 +233,22 @@ screening_model_3_likes(Rcpp::List inputs,
 			double beta0=-3.0,
 			double beta1=1.0,
 			double PrFalseNegBx=0.05,
-			double tol=1e-6) {
-  screening::ScreeningModel3 m([&](double u) { return R::dweibull(u,shape1,scale1,0); },
-			       [&](double u) { return R::pweibull(u,shape1,scale1,0,0); },
-			       [&](double u) { return R::dweibull(u,shape2,scale2,0); },
-			       [&](double u) { return R::pweibull(u,shape2,scale2,0,0); },
+			double tol=1e-6,
+			std::string return_type = "",
+			Rcpp::Nullable<Rcpp::NumericVector> weights = R_NilValue) {
+  
+  std::vector<double> w;
+  if (weights.isNotNull()) {
+    Rcpp::NumericVector weights_nv(weights);
+    w = Rcpp::as<std::vector<double>>(weights_nv);
+  }
+  
+  screening::ScreeningModel3 m([&](double u) { return dweibull(u,shape1,scale1); },
+			       [&](double u) { return sweibull(u,shape1,scale1); },
+			       [&](double u) { return dweibull(u,shape2,scale2); },
+			       [&](double u) { return sweibull(u,shape2,scale2); },
 			       [&](double y) { return 1.0/(1.0+std::exp(-(beta0+beta1*std::log(y)))); },
 			       PrFalseNegBx,
 			       tol);
-  return m.likes(inputs);
+	  return m.likes(inputs, 1e-12, return_type, w);
 }
