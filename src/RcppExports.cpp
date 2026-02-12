@@ -178,6 +178,29 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// screening_model_3_likes_MVK_exp
+std::vector<double> screening_model_3_likes_MVK_exp(Rcpp::List inputs, double A, double B, double delta, double rate, double beta0, double beta1, double PrFalseNegBx, double tol, std::string return_type, Rcpp::Nullable<Rcpp::NumericVector> weights, bool left_trunc, Rcpp::Nullable<Rcpp::DataFrame> incidence);
+RcppExport SEXP _screening_screening_model_3_likes_MVK_exp(SEXP inputsSEXP, SEXP ASEXP, SEXP BSEXP, SEXP deltaSEXP, SEXP rateSEXP, SEXP beta0SEXP, SEXP beta1SEXP, SEXP PrFalseNegBxSEXP, SEXP tolSEXP, SEXP return_typeSEXP, SEXP weightsSEXP, SEXP left_truncSEXP, SEXP incidenceSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::List >::type inputs(inputsSEXP);
+    Rcpp::traits::input_parameter< double >::type A(ASEXP);
+    Rcpp::traits::input_parameter< double >::type B(BSEXP);
+    Rcpp::traits::input_parameter< double >::type delta(deltaSEXP);
+    Rcpp::traits::input_parameter< double >::type rate(rateSEXP);
+    Rcpp::traits::input_parameter< double >::type beta0(beta0SEXP);
+    Rcpp::traits::input_parameter< double >::type beta1(beta1SEXP);
+    Rcpp::traits::input_parameter< double >::type PrFalseNegBx(PrFalseNegBxSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    Rcpp::traits::input_parameter< std::string >::type return_type(return_typeSEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::NumericVector> >::type weights(weightsSEXP);
+    Rcpp::traits::input_parameter< bool >::type left_trunc(left_truncSEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::DataFrame> >::type incidence(incidenceSEXP);
+    rcpp_result_gen = Rcpp::wrap(screening_model_3_likes_MVK_exp(inputs, A, B, delta, rate, beta0, beta1, PrFalseNegBx, tol, return_type, weights, left_trunc, incidence));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_screening_screening_model_1_predictions", (DL_FUNC) &_screening_screening_model_1_predictions, 9},
@@ -188,6 +211,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_screening_screening_model_3_likes", (DL_FUNC) &_screening_screening_model_3_likes, 11},
     {"_screening_screening_model_3_likes_MVK", (DL_FUNC) &_screening_screening_model_3_likes_MVK, 14},
     {"_screening_screening_model_3_likes_MVK_lognorm", (DL_FUNC) &_screening_screening_model_3_likes_MVK_lognorm, 14},
+    {"_screening_screening_model_3_likes_MVK_exp", (DL_FUNC) &_screening_screening_model_3_likes_MVK_exp, 13},
     {NULL, NULL, 0}
 };
 

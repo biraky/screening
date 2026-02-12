@@ -175,3 +175,24 @@ screening_model_3_likes_MVK_lognorm <- function(inputs, A = -0.1, B = 1e-4, delt
     .Call('_screening_screening_model_3_likes_MVK_lognorm', PACKAGE = 'screening', inputs, A, B, delta, mulog, sdlog, beta0, beta1, PrFalseNegBx, tol, return_type, weights, left_trunc, incidence)
 }
 
+#' Do likelihood calculations for ScreeningModel3 using MVK onset and Exponential Sojourn
+#' @name ScreeningModel3MVKExp
+#' @param inputs list of list with elements of t for the evaluation time, tj for the screening times and type for the type of likelihood (1=No cancer detected, 2=Screen-detected cancer, 3=Interval cancer)
+#' @param A MVK parameter A (typically negative, related to net proliferation)
+#' @param B MVK parameter B (typically positive, related to malignant transformation)
+#' @param delta MVK parameter delta (ratio of initiation rate to cell division rate)
+#' @param rate Exponential rate for clinical diagnosis (Sojourn density, default=0.1 ~ mean 10 yrs)
+#' @param beta0 intercept for logistic model for false negative fraction
+#' @param beta1 slope of log(yi) for logistic model for false negative fraction
+#' @param PrFalseNegBx probability of a false negative biopsy | cancer, biopsy undertaken
+#' @param tol double for the numeric tolerance of the integration (default=1e-6)
+#' @param return_type string, if "weighted_ll" returns sum of weighted log-likelihoods (default "")
+#' @param weights vector of weights corresponding to inputs, required if return_type is "weighted_ll"
+#' @param left_trunc bool, apply left truncation adjustment (default false)
+#' @param incidence DataFrame containing background incidence rates, required if left_trunc is true
+#' @return vector of likelihoods (or vector of length 1 containing weighted log-likelihood sum)
+#' @export
+screening_model_3_likes_MVK_exp <- function(inputs, A = -0.1, B = 1e-4, delta = 1e-4, rate = 0.1, beta0 = -3.0, beta1 = 1.0, PrFalseNegBx = 0.05, tol = 1e-6, return_type = "", weights = NULL, left_trunc = FALSE, incidence = NULL) {
+    .Call('_screening_screening_model_3_likes_MVK_exp', PACKAGE = 'screening', inputs, A, B, delta, rate, beta0, beta1, PrFalseNegBx, tol, return_type, weights, left_trunc, incidence)
+}
+
