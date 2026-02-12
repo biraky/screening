@@ -376,19 +376,56 @@ namespace screening {
       return likes(inputs, eps, "", {}); 
     }
 
-    // TODO: ideally add weighted likelihood for all models; 
     // this overload will do for now
+    // weigthed ll
+    // left truncation, very specific
     std::vector<double> likes(Rcpp::List inputs, double eps=1.0e-12,
                               std::string return_type = "",
-                              std::vector<double> weights = {}) {
+                              std::vector<double> weights = {},
+                              bool left_trunc = false,
+                              Rcpp::Nullable<Rcpp::DataFrame> incidence =
+                                R_NilValue) {
+      
       bool weighted_ll = return_type == "weighted_ll";
+      
+      // left truncation stuff
+      std::vector<double> inc_years;
+      std::vector<std::vector<double>> inc_rates;
+      int n_inc_years = 0;
+      
+      if (left_trunc && incidence.isNotNull()){
+        
+        Rcpp::DataFrame df(incidence);
+        inc_years = Rcpp::as<std::vector<double>>(df["year"]);
+        n_inc_years = inc_years.size();
+      
+      std::vector<std::string> age_cols = {
+        "<40", "40-44", "45-49", "50-54", "55-59", 
+        "60-64", "65-69", "70-74", "75-79", "80-84", "85+"
+      };
+      
+      int n_age_grps = age_cols.size();
+      
+      // basically a matrix
+      inc_rates.resize(n_inc_years, std::vector<double>(n_age_grps)); 
+      
+      // fill the matrix
+      for(int j = 0; j < n_age_grps; ++j) {
+        std::vector<double> current_col = 
+          Rcpp::as<std::vector<double>>(df[age_cols[j]]);
+        for(int i = 0; i < n_inc_years; ++i) {
+          inc_rates[i][j] = current_col[i] / 100000.0; 
+        }
+      }
+      }
       
       struct SubjectData {
         double t;
         int type;
         std::vector<double> ti; 
         std::vector<double> yi; 
-        std::vector<int> bxi; 
+        std::vector<int> bxi;
+        double dob;
       };
       
       size_t n_obs = inputs.size();
@@ -409,6 +446,8 @@ namespace screening {
         
         data[i].type = Rcpp::as<int>(subject["type"]);
         
+        data[i].dob = Rcpp::as<double>(subject["dob"]);
+        
         if(data[i].type >3) {
           Rcpp::stop("Only 3 screen types are supported");
         }
@@ -418,8 +457,10 @@ namespace screening {
         data[i].bxi = Rcpp::as<std::vector<int>>(subject["bxi"]);
       }
       
-    #pragma omp parallel 
+#pragma omp parallel 
 {
+  using namespace boost::math::quadrature;
+  
   // copy of the model for each thread
   ScreeningModel3 local_model = *this;
   
@@ -439,12 +480,61 @@ namespace screening {
       out[i] = local_model.like_interval_cancer(data[i].t);
     }
     
+    if(left_trunc) {
+    // left truncation
+    double cum_haz = 0.0;
+    
+    for(int k = 0; k < n_inc_years; ++k) {
+      
+      double age_at_year = inc_years[k] - data[i].dob;
+      
+      // not born yet => skip
+      if (age_at_year < 0) continue;
+      
+      int age_idx = 0;
+      
+      // age to column index
+      // <40 (0), 40-44 (1), 45-49 (2) ... 85+ (10)
+      if (age_at_year < 40.0) {
+        age_idx = 0;
+      } else if (age_at_year >= 85.0) {
+        age_idx = 10;
+      } else {
+        // 40:=1, 44.9 := floor((44.9-40)/5+1)= 1, 45 := 2, etc
+        age_idx = (int)((age_at_year - 40.0) / 5.0) + 1;
+      }
+      
+      cum_haz += inc_rates[k][age_idx];
+    }
+    double X_Y_1997_2006 = std::exp(-cum_haz);
+    
+    // basically we just need: S_onset(t = age at 1997) + 
+    //                         \Int_0^t [ f_onset(u) * S_clinical(t-u) du ]
+
+    double age_1997 = 1997.0 - data[i].dob;
+    double X_Y_0_1997 = 1.0; 
+    
+    if (age_1997 > 0) {
+    
+      auto fn = [&](double x) {
+        return local_model.f1(x) * local_model.S2(age_1997 - x);
+      };
+      
+      X_Y_0_1997 = local_model.S1(age_1997) + 
+        boost::math::quadrature::gauss_kronrod<double, 15>::integrate(fn, 0.0, age_1997, 5,
+                                             local_model.tol,
+                                             &local_model.error);
+    }   
+    
+    out[i] = out[i] / X_Y_0_1997 / X_Y_1997_2006;
+    }
     if(weighted_ll) out[i] = weights[i]*std::log(out[i]);
   }
 }
 
 return out;
     }
+    
     
   };
   

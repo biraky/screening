@@ -31,7 +31,9 @@ screening_model_3_likes(
   beta0 = -3,
   beta1 = 1,
   PrFalseNegBx = 0.05,
-  tol = 1e-06
+  tol = 1e-06,
+  return_type = "",
+  weights = NULL
 )
 }
 \arguments{
@@ -59,12 +61,16 @@ screening_model_3_likes(
 
 \item{inputs}{list of list with elements of t for the evaluation time, tj for the screening times and type for the type of likelihood (1=No cancer detected, 2=Screen-detected cancer, 3=Interval cancer)}
 
+\item{return_type}{string, if "weighted_ll" returns sum of weighted log-likelihoods (default "")}
+
+\item{weights}{vector of weights corresponding to inputs, required if return_type is "weighted_ll"}
+
 \item{shape}{Weibull shape for onset}
 }
 \value{
 data-frame with elements t, X, Y, Z (for state probabilities) and I (for incidence)
 
-vector of likelihoods
+vector of likelihoods (or vector of length 1 containing weighted log-likelihood sum)
 }
 \description{
 Do predictions for ScreeningModel3
