@@ -484,7 +484,7 @@ namespace screening {
     // left truncation
     double cum_haz = 0.0;
     
-    for(int k = 0; k < n_inc_years; ++k) {
+    for(int k = 0; k < n_inc_years; k++) {
       
       double age_at_year = inc_years[k] - data[i].dob;
       
@@ -510,9 +510,13 @@ namespace screening {
     
     // basically we just need: S_onset(t = age at 1997) + 
     //                         \Int_0^t [ f_onset(u) * S_clinical(t-u) du ]
-
-    double age_1997 = 1997.0 - data[i].dob;
-    double X_Y_0_1997 = 1.0; 
+    
+    
+    // 1997-01-01 is 9862 days after the epoch
+    double date_1997_days = 9862.0;
+    double age_1997 = (date_1997_days - data[i].dob) / 365.25;
+    
+    double X_Y_0_1997 = 1.0;
     
     if (age_1997 > 0) {
     
@@ -524,7 +528,7 @@ namespace screening {
         boost::math::quadrature::gauss_kronrod<double, 15>::integrate(fn, 0.0, age_1997, 5,
                                              local_model.tol,
                                              &local_model.error);
-    }   
+    }
     
     out[i] = out[i] / X_Y_0_1997 / X_Y_1997_2006;
     }
