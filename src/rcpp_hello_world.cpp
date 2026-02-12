@@ -1,6 +1,10 @@
 #include <Rcpp.h>
 #include "screening.h"
 
+#define _USE_MATH_DEFINES // for pi
+#include <cmath>
+
+
 //' Do predictions for ScreeningModel1
 //' @name ScreeningModel1
 //' @param t double vector of times to evaluate
@@ -283,7 +287,6 @@ inline double pMVK(double t, double A, double B, double delta, bool lower_tail =
   return lower_tail ? -std::expm1(logS) : std::exp(logS);
 }
 
-
 //' Do likelihood calculations for ScreeningModel3 using MVK onset
 //' @name ScreeningModel3MVK
 //' @param inputs list of list with elements of t for the evaluation time, tj for the screening times and type for the type of likelihood (1=No cancer detected, 2=Screen-detected cancer, 3=Interval cancer)
@@ -336,3 +339,66 @@ inline double pMVK(double t, double A, double B, double delta, bool lower_tail =
    
    return m.likes(inputs, 1e-12, return_type, w, left_trunc, incidence);
  }
+
+inline double dlnorm(double t, double mulog, double sdlog) {
+  return (t <= 0) ? 0.0 : (1.0 / (t * sdlog * std::sqrt(2.0 * M_PI))) * std::exp(-0.5 * std::pow((std::log(t) - mulog) / sdlog, 2.0));
+}
+
+inline double plnorm(double t, double mulog, double sdlog, bool lower_tail = true) {
+  return (t <= 0) ? (lower_tail ? 0.0 : 1.0) : 0.5 * std::erfc(((lower_tail ? -1.0 : 1.0) * (std::log(t) - mulog)) / (sdlog * std::sqrt(2.0)));
+}
+
+
+//' Do likelihood calculations for ScreeningModel3 using MVK onset and Lognormal Sojourn
+//' @name ScreeningModel3MVKLognorm
+//' @param inputs list of list with elements of t for the evaluation time, tj for the screening times and type for the type of likelihood (1=No cancer detected, 2=Screen-detected cancer, 3=Interval cancer)
+//' @param A MVK parameter A (typically negative, related to net proliferation)
+//' @param B MVK parameter B (typically positive, related to malignant transformation)
+//' @param delta MVK parameter delta (ratio of initiation rate to cell division rate)
+//' @param mulog Lognormal meanlog for clinical diagnosis (Sojourn density, default=2.3 ~ 10 yrs)
+//' @param sdlog Lognormal sdlog for clinical diagnosis (Sojourn density, default=0.6)
+//' @param beta0 intercept for logistic model for false negative fraction
+//' @param beta1 slope of log(yi) for logistic model for false negative fraction
+//' @param PrFalseNegBx probability of a false negative biopsy | cancer, biopsy undertaken
+//' @param tol double for the numeric tolerance of the integration (default=1e-6)
+//' @param return_type string, if "weighted_ll" returns sum of weighted log-likelihoods (default "")
+//' @param weights vector of weights corresponding to inputs, required if return_type is "weighted_ll"
+//' @param left_trunc bool, apply left truncation adjustment (default false)
+//' @param incidence DataFrame containing background incidence rates, required if left_trunc is true
+//' @return vector of likelihoods (or vector of length 1 containing weighted log-likelihood sum)
+//' @export
+// [[Rcpp::export]]
+std::vector<double> screening_model_3_likes_MVK_lognorm(
+   Rcpp::List inputs,
+   double A = -0.1,
+   double B = 1e-4,
+   double delta = 1e-4,
+   double mulog = 2.3, 
+   double sdlog = 0.6,
+   double beta0 = -3.0,
+   double beta1 = 1.0,
+   double PrFalseNegBx = 0.05,
+   double tol = 1e-6,
+   std::string return_type = "",
+   Rcpp::Nullable<Rcpp::NumericVector> weights = R_NilValue,
+   bool left_trunc = false,
+   Rcpp::Nullable<Rcpp::DataFrame> incidence = R_NilValue) {
+ 
+ std::vector<double> w;
+ 
+ if(weights.isNotNull()) {
+   Rcpp::NumericVector weights_nv(weights);
+   w = Rcpp::as<std::vector<double>>(weights_nv);
+ }
+ 
+ // Note: plnorm passed with false creates the Survival function S(t)
+ screening::ScreeningModel3 m([&](double u){ return dMVK(u, A, B, delta);},
+                              [&](double u){ return pMVK(u, A, B, delta, 0);},
+                              [&](double u){ return dlnorm(u, mulog, sdlog); },
+                              [&](double u){ return plnorm(u, mulog, sdlog, false); },
+                              [&](double y){ return 1.0/(1.0+std::exp(-(beta0+beta1*std::log(y))));},
+                              PrFalseNegBx,
+                              tol);
+ 
+ return m.likes(inputs, 1e-12, return_type, w, left_trunc, incidence);
+}
