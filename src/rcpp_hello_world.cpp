@@ -463,3 +463,68 @@ std::vector<double> screening_model_3_likes_MVK_exp(
  
  return m.likes(inputs, 1e-12, return_type, w, left_trunc, incidence);
 }
+
+//' Do likelihood calculations for ScreeningModel2 using MVK onset and Exponential Sojourn
+//' @name ScreeningModel2MVKExp
+//' @param inputs list of list with elements of t for the evaluation time, tj for the screening times and type for the type of likelihood (1=No cancer detected, 2=Screen-detected cancer, 3=Interval cancer)
+//' @param A MVK parameter A (typically negative, related to net proliferation)
+//' @param B MVK parameter B (typically positive, related to malignant transformation)
+//' @param delta MVK parameter delta (ratio of initiation rate to cell division rate)
+//' @param rate Exponential rate for clinical diagnosis (Sojourn density, default=0.1 ~ mean 10 yrs)
+//' @param beta0 intercept for logistic model for false negative fraction
+//' @param beta1 slope of log(yi) for logistic model for false negative fraction
+//' @param tol double for the numeric tolerance of the integration (default=1e-6)
+//' @return vector of likelihoods
+//' @export
+// [[Rcpp::export]]
+std::vector<double> screening_model_2_likes_MVK_exp(
+   Rcpp::List inputs,
+   double A = -0.1,
+   double B = 1e-4,
+   double delta = 1e-4,
+   double rate = 0.1,
+   double beta0 = -3.0,
+   double beta1 = 1.0,
+   double tol = 1e-6) {
+ 
+ screening::ScreeningModel2 m([&](double u){ return dMVK(u, A, B, delta);},
+                              [&](double u){ return pMVK(u, A, B, delta, 0);},
+                              [&](double u){ return dexp(u, rate); },
+                              [&](double u){ return pexp(u, rate, false); },
+                              [&](double y){ return 1.0/(1.0+std::exp(-(beta0+beta1*std::log(y))));},
+                              tol);
+ 
+ return m.likes(inputs);
+}
+
+//' Do likelihood calculations for ScreeningModel1 using MVK onset and Exponential Sojourn
+//' @name ScreeningModel1MVKExp
+//' @param inputs list of list with elements of t for the evaluation time, tj for the screening times and type for the type of likelihood (1=No cancer detected, 2=Screen-detected cancer, 3=Interval cancer)
+//' @param A MVK parameter A (typically negative, related to net proliferation)
+//' @param B MVK parameter B (typically positive, related to malignant transformation)
+//' @param delta MVK parameter delta (ratio of initiation rate to cell division rate)
+//' @param rate Exponential rate for clinical diagnosis (Sojourn density, default=0.1 ~ mean 10 yrs)
+//' @param beta false negative fraction for screening
+//' @param tol double for the numeric tolerance of the integration (default=1e-6)
+//' @return vector of likelihoods
+//' @export
+// [[Rcpp::export]]
+std::vector<double> screening_model_1_likes_MVK_exp(
+   Rcpp::List inputs,
+   double A = -0.1,
+   double B = 1e-4,
+   double delta = 1e-4,
+   double rate = 0.1,
+   double beta = 0.05,
+   double tol = 1e-6) {
+ 
+ // Note: pexp passed with false creates the Survival function S(t)
+ screening::ScreeningModel1 m([&](double u){ return dMVK(u, A, B, delta);},
+                              [&](double u){ return pMVK(u, A, B, delta, 0);},
+                              [&](double u){ return dexp(u, rate); },
+                              [&](double u){ return pexp(u, rate, false); },
+                              beta,
+                              tol);
+ 
+ return m.likes(inputs);
+}
