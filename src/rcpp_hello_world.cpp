@@ -391,7 +391,6 @@ std::vector<double> screening_model_3_likes_MVK_lognorm(
    w = Rcpp::as<std::vector<double>>(weights_nv);
  }
  
- // Note: plnorm passed with false creates the Survival function S(t)
  screening::ScreeningModel3 m([&](double u){ return dMVK(u, A, B, delta);},
                               [&](double u){ return pMVK(u, A, B, delta, 0);},
                               [&](double u){ return dlnorm(u, mulog, sdlog); },
@@ -452,7 +451,6 @@ std::vector<double> screening_model_3_likes_MVK_exp(
    w = Rcpp::as<std::vector<double>>(weights_nv);
  }
  
- // Note: pexp passed with false creates the Survival function S(t)
  screening::ScreeningModel3 m([&](double u){ return dMVK(u, A, B, delta);},
                               [&](double u){ return pMVK(u, A, B, delta, 0);},
                               [&](double u){ return dexp(u, rate); },
@@ -518,7 +516,6 @@ std::vector<double> screening_model_1_likes_MVK_exp(
    double beta = 0.05,
    double tol = 1e-6) {
  
- // Note: pexp passed with false creates the Survival function S(t)
  screening::ScreeningModel1 m([&](double u){ return dMVK(u, A, B, delta);},
                               [&](double u){ return pMVK(u, A, B, delta, 0);},
                               [&](double u){ return dexp(u, rate); },
@@ -529,7 +526,7 @@ std::vector<double> screening_model_1_likes_MVK_exp(
  return m.likes(inputs);
 }
 
-//' Do likelihood calculations for ScreeningModel4 using MVK onset, Exponential Sojourn, and Log-linear PSA
+//' Do likelihood calculations for ScreeningModel4 using MVK onset, Exponential Sojourn, and Log-linear PSA with change of slope for onset
 //' @name ScreeningModel4LikesLoglin
 //' @param inputs list of list with elements of t for the evaluation time, tj for the screening times, yi for biomarker values, bxi for biopsy indicators, and type for the type of likelihood (1=No cancer detected, 2=Screen-detected cancer, 3=Interval cancer)
 //' @param A MVK parameter A (typically negative, related to net proliferation)
@@ -582,7 +579,7 @@ std::vector<double> screening_model_4_likes_loglin(
                               [&](double u){ return pexp(u, rate, false); },
                               [&](double y){ return 1.0/(1.0+std::exp(-(beta0+beta1*std::log(y))));},
                               [&](double y, double age, double x){ 
-                                // x is the unobserved onset time. std::max handles x=1e9 cleanly for baseline.
+                                // x is the onset time. std::max handles x=1e9 in no_onset_history *= biomarker_den(yi[k], this->tj[k+1], 1e9); 
                                 double mu = b0_psa + b1_psa * (age - 35.0) + b2_psa * std::max(0.0, age - x);
                                 if (y <= 0) return 0.0;
                                 return (1.0 / (y * sigma_psa * std::sqrt(2.0 * M_PI))) * std::exp(-0.5 * std::pow((std::log(y) - mu) / sigma_psa, 2.0));

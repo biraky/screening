@@ -227,7 +227,7 @@ screening_model_1_likes_MVK_exp <- function(inputs, A = -0.1, B = 1e-4, delta = 
     .Call('_screening_screening_model_1_likes_MVK_exp', PACKAGE = 'screening', inputs, A, B, delta, rate, beta, tol)
 }
 
-#' Do likelihood calculations for ScreeningModel4 using MVK onset, Exponential Sojourn, and Log-linear PSA
+#' Do likelihood calculations for ScreeningModel4 using MVK onset, Exponential Sojourn, and Log-linear PSA with change of slope for onset
 #' @name ScreeningModel4LikesLoglin
 #' @param inputs list of list with elements of t for the evaluation time, tj for the screening times, yi for biomarker values, bxi for biopsy indicators, and type for the type of likelihood (1=No cancer detected, 2=Screen-detected cancer, 3=Interval cancer)
 #' @param A MVK parameter A (typically negative, related to net proliferation)

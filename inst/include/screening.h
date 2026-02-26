@@ -9,11 +9,13 @@
 namespace screening {
 
 /**
- Currently, we assume three types of screening models:
+ Currently, we assume four types of screening models:
  1. Screening episodes with end times of the episodes and whether a cancer was detected
  2. Screening episodes with end times of the episodes, the/a biomarker value and
  whether a cancer was detected
  3. Screening episodes with end times of the episodes, the/a biomarker value, whether a
+ biopsy was undertaken and whether a cancer was detected
+ 4. Screening episodes with end times of the episodes, the/a biomarker value dependent on cancer onset, whether a
  biopsy was undertaken and whether a cancer was detected
  
  We have factored some functionality into `AbstractScreeningModel`.
@@ -583,7 +585,7 @@ return out;
   
 };
 
-// ScreeningModel4: Explicit joint density for biomarker history
+// ScreeningModel4: ScreeningModel3 + biomarker density is dependent on onset
 template<class T1, class T2, class T3, class T4, class T5, class T6>
 class ScreeningModel4 : public AbstractScreeningModel<T1,T2,T3,T4> {
 public:
@@ -611,7 +613,7 @@ public:
     this->bxi.assign(bxi_ptr, bxi_ptr + bxi_n);
   }
   
-  //  joint probability of having a biopsy AND biomarker values given onset time x
+  //  joint probability of having a biopsy given biomarker AND biomarker values given onset time x
   double prod_history(size_t i, size_t j, double x, bool detected = false) {
     double value = 1.0;
     for (size_t k=0; k<j; k++) {

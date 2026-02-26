@@ -3,7 +3,7 @@
 \name{ScreeningModel4LikesLoglin}
 \alias{ScreeningModel4LikesLoglin}
 \alias{screening_model_4_likes_loglin}
-\title{Do likelihood calculations for ScreeningModel4 using MVK onset, Exponential Sojourn, and Log-linear PSA}
+\title{Do likelihood calculations for ScreeningModel4 using MVK onset, Exponential Sojourn, and Log-linear PSA with change of slope for onset}
 \usage{
 screening_model_4_likes_loglin(
   inputs,
@@ -64,5 +64,5 @@ screening_model_4_likes_loglin(
 vector of likelihoods (or vector of length 1 containing weighted log-likelihood sum)
 }
 \description{
-Do likelihood calculations for ScreeningModel4 using MVK onset, Exponential Sojourn, and Log-linear PSA
+Do likelihood calculations for ScreeningModel4 using MVK onset, Exponential Sojourn, and Log-linear PSA with change of slope for onset
 }
