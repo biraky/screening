@@ -2,6 +2,7 @@
 
 export(screening_model_1_likes)
 export(screening_model_1_likes_MVK_exp)
+export(screening_model_1_likes_MVK_exp_grad)
 export(screening_model_1_predictions)
 export(screening_model_2_likes)
 export(screening_model_2_likes_MVK_exp)

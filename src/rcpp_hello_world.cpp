@@ -3,14 +3,70 @@
 
 #define _USE_MATH_DEFINES // for pi
 #include <cmath>
+#include <array>
+#include <limits>
+#include <iostream>
+#include <vector>
 
+#include "cfaad/AAD.h"
+#include "cfaad/AADInit.hpp"
+
+#ifdef _OPENMP
+#include <omp.h>
+#endif
+
+// -------------------------------------------------------------
+// AD Compiler Helpers for cfaad and Boost
+// -------------------------------------------------------------
+namespace cfaad {
+// Teach C++ streams how to print a cfaad::Number (required by Boost Error Handling)
+inline std::ostream& operator<<(std::ostream& os, const Number& n) {
+os << n.value();
+return os;
+}
+
+// Teach C++ how to take the absolute value of cfaad types (required by Boost Quadrature)
+inline Number abs(const Number& n) {
+return n.value() < 0.0 ? Number(-n) : n;
+}
+template <typename L, typename R, typename OP>
+inline Number abs(const BinaryExpression<L, R, OP>& expr) {
+Number n(expr);
+return n.value() < 0.0 ? Number(-n) : n;
+}
+template <typename E, typename OP>
+inline Number abs(const UnaryExpression<E, OP>& expr) {
+Number n(expr);
+return n.value() < 0.0 ? Number(-n) : n;
+}
+}
+
+// Boost Quadrature needs numeric limits to compile generic AD types safely.
+namespace std {
+template <>
+struct numeric_limits<cfaad::Number> : public numeric_limits<double> {
+static cfaad::Number min() { return cfaad::Number(numeric_limits<double>::min()); }
+static cfaad::Number max() { return cfaad::Number(numeric_limits<double>::max()); }
+static cfaad::Number lowest() { return cfaad::Number(numeric_limits<double>::lowest()); }
+static cfaad::Number epsilon() { return cfaad::Number(numeric_limits<double>::epsilon()); }
+static cfaad::Number round_error() { return cfaad::Number(numeric_limits<double>::round_error()); }
+static cfaad::Number infinity() { return cfaad::Number(numeric_limits<double>::infinity()); }
+static cfaad::Number quiet_NaN() { return cfaad::Number(numeric_limits<double>::quiet_NaN()); }
+static cfaad::Number signaling_NaN() { return cfaad::Number(numeric_limits<double>::signaling_NaN()); }
+static cfaad::Number denorm_min() { return cfaad::Number(numeric_limits<double>::denorm_min()); }
+};
+}
+
+// -------------------------------------------------------------
+// Original Standard Functions
+// -------------------------------------------------------------
 
 //' Do predictions for ScreeningModel1
 //' @name ScreeningModel1
 //' @param t double vector of times to evaluate
 //' @param ti double vector of screening times
 //' @param scale1 Weibull scale for onset
-//' @param shape Weibull shape for onset
+//' @param shape1 Weibull shape for onset
 //' @param shape2 Weibull shape for clinical diagnosis
 //' @param scale2 Weibull scale for clinical diagnosis
 //' @param beta false negative fraction for screening
@@ -29,30 +85,30 @@
 // [[Rcpp::export]]
 Rcpp::DataFrame
 screening_model_1_predictions(std::vector<double> t,
-			      std::vector<double> ti,
-			      double shape1=1,
-			      double scale1=1,
-			      double shape2=1,
-			      double scale2=1,
-			      double beta=0.05,
-			      bool simple = true,
-			      double tol = 1e-6) {
-  // Initialize the ScreeningModel with appropriate parameters
-  screening::ScreeningModel1 m([&](double u) { return R::dweibull(u,shape1,scale1,0); },
-			       [&](double u) { return R::pweibull(u,shape1,scale1,0,0); },
-			       [&](double u) { return R::dweibull(u,shape2,scale2,0); },
-			       [&](double u) { return R::pweibull(u,shape2,scale2,0,0); },
-			       beta,
-			       tol);
-  m.update(ti);
-  return m.predictions(t,simple);
+                            std::vector<double> ti,
+                            double shape1=1,
+                            double scale1=1,
+                            double shape2=1,
+                            double scale2=1,
+                            double beta=0.05,
+                            bool simple = true,
+                            double tol = 1e-6) {
+// Initialize the ScreeningModel with appropriate parameters
+screening::ScreeningModel1 m([&](double u) { return R::dweibull(u,shape1,scale1,0); },
+                             [&](double u) { return R::pweibull(u,shape1,scale1,0,0); },
+                             [&](double u) { return R::dweibull(u,shape2,scale2,0); },
+                             [&](double u) { return R::pweibull(u,shape2,scale2,0,0); },
+                             beta,
+                             tol);
+m.update(ti);
+return m.predictions(t,simple);
 }
 
 //' Do likelihood calculations for ScreeningModel1
 //' @name ScreeningModel1
 //' @param inputs list of list with elements of t for the evaluation time, tj for the screening times and type for the type of likelihood (1=No cancer detected, 2=Screen-detected cancer, 3=Interval cancer)
 //' @param scale1 Weibull scale for onset
-//' @param shape Weibull shape for onset
+//' @param shape1 Weibull shape for onset
 //' @param shape2 Weibull shape for clinical diagnosis
 //' @param scale2 Weibull scale for clinical diagnosis
 //' @param beta false negative fraction for screening
@@ -62,14 +118,14 @@ screening_model_1_predictions(std::vector<double> t,
 // [[Rcpp::export]]
 std::vector<double>
 screening_model_1_likes(Rcpp::List inputs, double shape1 = 1.0, double scale1 = 1.0, 
-			double shape2 = 1.0, double scale2 = 1.0, double beta = 0.05,
-			double tol=1e-6) {
+                        double shape2 = 1.0, double scale2 = 1.0, double beta = 0.05,
+                        double tol=1e-6) {
   screening::ScreeningModel1 m([&](double u) { return R::dweibull(u,shape1,scale1,0); },
-			       [&](double u) { return R::pweibull(u,shape1,scale1,0,0); },
-			       [&](double u) { return R::dweibull(u,shape2,scale2,0); },
-			       [&](double u) { return R::pweibull(u,shape2,scale2,0,0); },
-			       beta,
-			       tol);
+                               [&](double u) { return R::pweibull(u,shape1,scale1,0,0); },
+                               [&](double u) { return R::dweibull(u,shape2,scale2,0); },
+                               [&](double u) { return R::pweibull(u,shape2,scale2,0,0); },
+                               beta,
+                               tol);
   return m.likes(inputs);
 }
 
@@ -79,7 +135,7 @@ screening_model_1_likes(Rcpp::List inputs, double shape1 = 1.0, double scale1 = 
 //' @param ti double vector of screening times
 //' @param yi double vector of screening times
 //' @param scale1 Weibull scale for onset
-//' @param shape Weibull shape for onset
+//' @param shape1 Weibull shape for onset
 //' @param shape2 Weibull shape for clinical diagnosis
 //' @param scale2 Weibull scale for clinical diagnosis
 //' @param beta0 intercept for logistic model for false negative fraction
@@ -99,30 +155,30 @@ screening_model_1_likes(Rcpp::List inputs, double shape1 = 1.0, double scale1 = 
 // [[Rcpp::export]]
 Rcpp::DataFrame
 screening_model_2_predictions(std::vector<double> t,
-			      std::vector<double> ti,
-			      std::vector<double> yi,
-			      double shape1=1, double scale1=1,
-			      double shape2=1, double scale2=1,
-			      double beta0=-3.0,
-			      double beta1=1.0,
-			      bool simple = true,
-			      double tol = 1e-6) {
-  // Initialize the model with appropriate parameters
-  screening::ScreeningModel2 m([&](double u) { return R::dweibull(u,shape1,scale1,0); },
-			       [&](double u) { return R::pweibull(u,shape1,scale1,0,0); },
-			       [&](double u) { return R::dweibull(u,shape2,scale2,0); },
-			       [&](double u) { return R::pweibull(u,shape2,scale2,0,0); },
-			       [&](double y) { return 1.0/(1.0+std::exp(-(beta0+beta1*std::log(y)))); },
-			       tol);
-  m.update(ti,yi);
-  return m.predictions(t,simple);
+                            std::vector<double> ti,
+                            std::vector<double> yi,
+                            double shape1=1, double scale1=1,
+                            double shape2=1, double scale2=1,
+                            double beta0=-3.0,
+                            double beta1=1.0,
+                            bool simple = true,
+                            double tol = 1e-6) {
+// Initialize the model with appropriate parameters
+screening::ScreeningModel2 m([&](double u) { return R::dweibull(u,shape1,scale1,0); },
+                             [&](double u) { return R::pweibull(u,shape1,scale1,0,0); },
+                             [&](double u) { return R::dweibull(u,shape2,scale2,0); },
+                             [&](double u) { return R::pweibull(u,shape2,scale2,0,0); },
+                             [&](double y) { return 1.0/(1.0+std::exp(-(beta0+beta1*std::log(y)))); },
+                             tol);
+m.update(ti,yi);
+return m.predictions(t,simple);
 }
 
 //' Do likelihood calculations for ScreeningModel2
 //' @name ScreeningModel2
 //' @param inputs list of list with elements of t for the evaluation time, tj for the screening times and type for the type of likelihood (1=No cancer detected, 2=Screen-detected cancer, 3=Interval cancer)
 //' @param scale1 Weibull scale for onset
-//' @param shape Weibull shape for onset
+//' @param shape1 Weibull shape for onset
 //' @param shape2 Weibull shape for clinical diagnosis
 //' @param scale2 Weibull scale for clinical diagnosis
 //' @param beta0 intercept for logistic model for false negative fraction
@@ -133,32 +189,30 @@ screening_model_2_predictions(std::vector<double> t,
 // [[Rcpp::export]]
 std::vector<double>
 screening_model_2_likes(Rcpp::List inputs,
-			double shape1 = 1.0,
-			double scale1 = 1.0, 
-			double shape2 = 1.0,
-			double scale2 = 1.0, 
-			double beta0=-3.0,
-			double beta1=1.0,
-			double tol=1e-6) {
+                        double shape1 = 1.0,
+                        double scale1 = 1.0, 
+                        double shape2 = 1.0,
+                        double scale2 = 1.0, 
+                        double beta0=-3.0,
+                        double beta1=1.0,
+                        double tol=1e-6) {
   screening::ScreeningModel2 m([&](double u) { return R::dweibull(u,shape1,scale1,0); },
-			       [&](double u) { return R::pweibull(u,shape1,scale1,0,0); },
-			       [&](double u) { return R::dweibull(u,shape2,scale2,0); },
-			       [&](double u) { return R::pweibull(u,shape2,scale2,0,0); },
-			       [&](double y) { return 1.0/(1.0+std::exp(-(beta0+beta1*std::log(y)))); },
-			       tol);
+                               [&](double u) { return R::pweibull(u,shape1,scale1,0,0); },
+                               [&](double u) { return R::dweibull(u,shape2,scale2,0); },
+                               [&](double u) { return R::pweibull(u,shape2,scale2,0,0); },
+                               [&](double y) { return 1.0/(1.0+std::exp(-(beta0+beta1*std::log(y)))); },
+                               tol);
   return m.likes(inputs);
 }
-
-
-
 
 //' Do predictions for ScreeningModel3
 //' @name ScreeningModel3
 //' @param t double vector of times to evaluate
 //' @param ti double vector of screening times
 //' @param yi double vector of screening times
+//' @param bxi integer vector of biopsy choices
 //' @param scale1 Weibull scale for onset
-//' @param shape Weibull shape for onset
+//' @param shape1 Weibull shape for onset
 //' @param shape2 Weibull shape for clinical diagnosis
 //' @param scale2 Weibull scale for clinical diagnosis
 //' @param beta0 intercept for logistic model for false negative fraction
@@ -179,45 +233,44 @@ screening_model_2_likes(Rcpp::List inputs,
 // [[Rcpp::export]]
 Rcpp::DataFrame
 screening_model_3_predictions(std::vector<double> t,
-			      std::vector<double> ti,
-			      std::vector<double> yi,
-			      std::vector<int> bxi,
-			      double shape1=1, double scale1=1,
-			      double shape2=1, double scale2=1,
-			      double beta0=-3.0,
-			      double beta1=1.0,
-			      double PrFalseNegBx=0.05,
-			      bool simple = true,
-			      double tol = 1e-6) {
-  // Initialize the model with appropriate parameters
-  screening::ScreeningModel3 m([&](double u) { return R::dweibull(u,shape1,scale1,0); },
-			       [&](double u) { return R::pweibull(u,shape1,scale1,0,0); },
-			       [&](double u) { return R::dweibull(u,shape2,scale2,0); },
-			       [&](double u) { return R::pweibull(u,shape2,scale2,0,0); },
-			       [&](double y) { return 1.0/(1.0+std::exp(-(beta0+beta1*std::log(y)))); },
-			       PrFalseNegBx,
-			       tol);
-  m.update(ti,yi,bxi);
-  return m.predictions(t,simple);
+                            std::vector<double> ti,
+                            std::vector<double> yi,
+                            std::vector<int> bxi,
+                            double shape1=1, double scale1=1,
+                            double shape2=1, double scale2=1,
+                            double beta0=-3.0,
+                            double beta1=1.0,
+                            double PrFalseNegBx=0.05,
+                            bool simple = true,
+                            double tol = 1e-6) {
+// Initialize the model with appropriate parameters
+screening::ScreeningModel3 m([&](double u) { return R::dweibull(u,shape1,scale1,0); },
+                             [&](double u) { return R::pweibull(u,shape1,scale1,0,0); },
+                             [&](double u) { return R::dweibull(u,shape2,scale2,0); },
+                             [&](double u) { return R::pweibull(u,shape2,scale2,0,0); },
+                             [&](double y) { return 1.0/(1.0+std::exp(-(beta0+beta1*std::log(y)))); },
+                             PrFalseNegBx,
+                             tol);
+m.update(ti,yi,bxi);
+return m.predictions(t,simple);
 }
 
 // these will end up inside openmp loop; same parametrisation like in R
 inline double dweibull(double x, double shape, double scale) {
-  if (x < 0) return 0.0;
-  double xl = x / scale;
-  return (shape / scale) * std::pow(xl, shape - 1.0) * std::exp(-std::pow(xl, shape));
+if (x < 0) return 0.0;
+double xl = x / scale;
+return (shape / scale) * std::pow(xl, shape - 1.0) * std::exp(-std::pow(xl, shape));
 }
 inline double pweibull(double x, double shape, double scale, bool lower_tail = false) {
-  if (x < 0) return lower_tail ? 0.0 : 1.0;
-  return lower_tail ? 1-std::exp(-std::pow(x / scale, shape)) : std::exp(-std::pow(x / scale, shape));
+if (x < 0) return lower_tail ? 0.0 : 1.0;
+return lower_tail ? 1-std::exp(-std::pow(x / scale, shape)) : std::exp(-std::pow(x / scale, shape));
 }
-
 
 //' Do likelihood calculations for ScreeningModel3
 //' @name ScreeningModel3
 //' @param inputs list of list with elements of t for the evaluation time, tj for the screening times and type for the type of likelihood (1=No cancer detected, 2=Screen-detected cancer, 3=Interval cancer)
 //' @param scale1 Weibull scale for onset
-//' @param shape Weibull shape for onset
+//' @param shape1 Weibull shape for onset
 //' @param shape2 Weibull shape for clinical diagnosis
 //' @param scale2 Weibull scale for clinical diagnosis
 //' @param beta0 intercept for logistic model for false negative fraction
@@ -231,32 +284,32 @@ inline double pweibull(double x, double shape, double scale, bool lower_tail = f
 // [[Rcpp::export]]
 std::vector<double>
 screening_model_3_likes(Rcpp::List inputs,
-			double shape1 = 1.0,
-			double scale1 = 1.0, 
-			double shape2 = 1.0,
-			double scale2 = 1.0, 
-			double beta0=-3.0,
-			double beta1=1.0,
-			double PrFalseNegBx=0.05,
-			double tol=1e-6,
-			std::string return_type = "", 
-			Rcpp::Nullable<Rcpp::NumericVector> weights = R_NilValue) {
+                        double shape1 = 1.0,
+                        double scale1 = 1.0, 
+                        double shape2 = 1.0,
+                        double scale2 = 1.0, 
+                        double beta0=-3.0,
+                        double beta1=1.0,
+                        double PrFalseNegBx=0.05,
+                        double tol=1e-6,
+                        std::string return_type = "", 
+                        Rcpp::Nullable<Rcpp::NumericVector> weights = R_NilValue) {
   
   std::vector<double> w;
-
+  
   if (weights.isNotNull()) {
     Rcpp::NumericVector weights_nv(weights);
     w = Rcpp::as<std::vector<double>>(weights_nv);
   }
   
   screening::ScreeningModel3 m([&](double u) { return dweibull(u,shape1,scale1); },
-			       [&](double u) { return pweibull(u,shape1,scale1, 0); },
-			       [&](double u) { return dweibull(u,shape2,scale2); },
-			       [&](double u) { return pweibull(u,shape2,scale2, 0); },
-			       [&](double y) { return 1.0/(1.0+std::exp(-(beta0+beta1*std::log(y)))); },
-			       PrFalseNegBx,
-			       tol);
-	  return m.likes(inputs, 1e-12, return_type, w);
+                               [&](double u) { return pweibull(u,shape1,scale1, 0); },
+                               [&](double u) { return dweibull(u,shape2,scale2); },
+                               [&](double u) { return pweibull(u,shape2,scale2, 0); },
+                               [&](double y) { return 1.0/(1.0+std::exp(-(beta0+beta1*std::log(y)))); },
+                               PrFalseNegBx,
+                               tol);
+  return m.likes(inputs, 1e-12, return_type, w);
 }
 
 // MVK distribution
@@ -276,15 +329,15 @@ screening_model_3_likes(Rcpp::List inputs,
 // (nu, alpha, beta, mu) >= 0
 // delta>0, B>=0, A<=0 => B-A>=B>=0
 inline double dMVK(double t, double A, double B, double delta) {
-  double P = std::expm1((B-A) * t) * std::exp(B * delta * t) * std::pow(B - A, delta);
-  double Q = std::pow(B * std::exp((B - A) * t) - A, 1+delta);
-  double val = - delta * A * B * P/Q;
-  if (!std::isfinite(val)) val = 0.0;
-  return val;
+double P = std::expm1((B-A) * t) * std::exp(B * delta * t) * std::pow(B - A, delta);
+double Q = std::pow(B * std::exp((B - A) * t) - A, 1+delta);
+double val = - delta * A * B * P/Q;
+if (!std::isfinite(val)) val = 0.0;
+return val;
 }
 inline double pMVK(double t, double A, double B, double delta, bool lower_tail = true) {
-  double logS = delta*(std::log(B-A) + B*t - std::log(B*std::exp((B-A)*t) - A));
-  return lower_tail ? -std::expm1(logS) : std::exp(logS);
+double logS = delta*(std::log(B-A) + B*t - std::log(B*std::exp((B-A)*t) - A));
+return lower_tail ? -std::expm1(logS) : std::exp(logS);
 }
 
 //' Do likelihood calculations for ScreeningModel3 using MVK onset
@@ -306,48 +359,47 @@ inline double pMVK(double t, double A, double B, double delta, bool lower_tail =
 //' @return vector of likelihoods (or vector of length 1 containing weighted log-likelihood sum)
 //' @export
 // [[Rcpp::export]]
- std::vector<double> screening_model_3_likes_MVK(
-     Rcpp::List inputs,
-     double A = -0.1,
-     double B = 1e-4,
-     double delta = 1e-4,
-     double shape2 = 1,
-     double scale2 = 1,
-     double beta0=-3.0,
-     double beta1=1.0,
-     double PrFalseNegBx=0.05,
-     double tol = 1e-6,
-     std::string return_type = "",
-     Rcpp::Nullable<Rcpp::NumericVector> weights = R_NilValue,
-     bool left_trunc = false,
-     Rcpp::Nullable<Rcpp::DataFrame> incidence = R_NilValue){
-   
-   std::vector<double> w;
-   
-   if(weights.isNotNull()) {
-     Rcpp::NumericVector weights_nv(weights);
-     w = Rcpp::as<std::vector<double>>(weights_nv);
-   }
-   
-   screening::ScreeningModel3 m([&](double u){ return dMVK(u, A, B, delta);},
-                                [&](double u){ return pMVK(u, A, B, delta, 0);},
-                                [&](double u){ return dweibull(u,shape2,scale2); },
-                                [&](double u){ return pweibull(u,shape2,scale2, 0); },
-                                [&](double y){ return 1.0/(1.0+std::exp(-(beta0+beta1*std::log(y))));},
-                                PrFalseNegBx,
-                                tol);
-   
-   return m.likes(inputs, 1e-12, return_type, w, left_trunc, incidence);
+std::vector<double> screening_model_3_likes_MVK(
+   Rcpp::List inputs,
+   double A = -0.1,
+   double B = 1e-4,
+   double delta = 1e-4,
+   double shape2 = 1,
+   double scale2 = 1,
+   double beta0=-3.0,
+   double beta1=1.0,
+   double PrFalseNegBx=0.05,
+   double tol = 1e-6,
+   std::string return_type = "",
+   Rcpp::Nullable<Rcpp::NumericVector> weights = R_NilValue,
+   bool left_trunc = false,
+   Rcpp::Nullable<Rcpp::DataFrame> incidence = R_NilValue){
+ 
+ std::vector<double> w;
+ 
+ if(weights.isNotNull()) {
+   Rcpp::NumericVector weights_nv(weights);
+   w = Rcpp::as<std::vector<double>>(weights_nv);
  }
+ 
+ screening::ScreeningModel3 m([&](double u){ return dMVK(u, A, B, delta);},
+                              [&](double u){ return pMVK(u, A, B, delta, 0);},
+                              [&](double u){ return dweibull(u,shape2,scale2); },
+                              [&](double u){ return pweibull(u,shape2,scale2, 0); },
+                              [&](double y){ return 1.0/(1.0+std::exp(-(beta0+beta1*std::log(y))));},
+                              PrFalseNegBx,
+                              tol);
+ 
+ return m.likes(inputs, 1e-12, return_type, w, left_trunc, incidence);
+}
 
 inline double dlnorm(double t, double mulog, double sdlog) {
-  return (t <= 0) ? 0.0 : (1.0 / (t * sdlog * std::sqrt(2.0 * M_PI))) * std::exp(-0.5 * std::pow((std::log(t) - mulog) / sdlog, 2.0));
+return (t <= 0) ? 0.0 : (1.0 / (t * sdlog * std::sqrt(2.0 * M_PI))) * std::exp(-0.5 * std::pow((std::log(t) - mulog) / sdlog, 2.0));
 }
 
 inline double plnorm(double t, double mulog, double sdlog, bool lower_tail = true) {
-  return (t <= 0) ? (lower_tail ? 0.0 : 1.0) : 0.5 * std::erfc(((lower_tail ? -1.0 : 1.0) * (std::log(t) - mulog)) / (sdlog * std::sqrt(2.0)));
+return (t <= 0) ? (lower_tail ? 0.0 : 1.0) : 0.5 * std::erfc(((lower_tail ? -1.0 : 1.0) * (std::log(t) - mulog)) / (sdlog * std::sqrt(2.0)));
 }
-
 
 //' Do likelihood calculations for ScreeningModel3 using MVK onset and Lognormal Sojourn
 //' @name ScreeningModel3MVKLognorm
@@ -403,12 +455,12 @@ std::vector<double> screening_model_3_likes_MVK_lognorm(
 }
 
 inline double dexp(double t, double rate) {
-  return (t < 0) ? 0.0 : rate * std::exp(-rate * t);
+return (t < 0) ? 0.0 : rate * std::exp(-rate * t);
 }
 
 inline double pexp(double t, double rate, bool lower_tail = true) {
-  if (t < 0) return lower_tail ? 0.0 : 1.0;
-  return lower_tail ? 1.0 - std::exp(-rate * t) : std::exp(-rate * t);
+if (t < 0) return lower_tail ? 0.0 : 1.0;
+return lower_tail ? 1.0 - std::exp(-rate * t) : std::exp(-rate * t);
 }
 
 //' Do likelihood calculations for ScreeningModel3 using MVK onset and Exponential Sojourn
@@ -516,12 +568,15 @@ std::vector<double> screening_model_1_likes_MVK_exp(
    double beta = 0.05,
    double tol = 1e-6) {
  
- screening::ScreeningModel1 m([&](double u){ return dMVK(u, A, B, delta);},
-                              [&](double u){ return pMVK(u, A, B, delta, 0);},
-                              [&](double u){ return dexp(u, rate); },
-                              [&](double u){ return pexp(u, rate, false); },
-                              beta,
-                              tol);
+ screening::ScreeningModel1<
+   std::function<double(double)>, std::function<double(double)>, 
+   std::function<double(double)>, std::function<double(double)>, double> m(
+       [&](double u){ return dMVK(u, A, B, delta);},
+       [&](double u){ return pMVK(u, A, B, delta, 0);},
+       [&](double u){ return dexp(u, rate); },
+       [&](double u){ return pexp(u, rate, false); },
+       beta,
+       tol);
  
  return m.likes(inputs);
 }
@@ -588,4 +643,163 @@ std::vector<double> screening_model_4_likes_loglin(
                               tol);
  
  return m.likes(inputs, 1e-12, return_type, w, left_trunc, incidence);
+}
+
+// -------------------------------------------------------------
+// Algorithmic Differentiation Additions
+// -------------------------------------------------------------
+
+template <typename T>
+inline T dMVK_t(double t, T A, T B, T delta) {
+// Using exp(x) - 1.0 as cfaad does not provide expm1
+T P = (cfaad::exp((B - A) * t) - T(1.0)) * cfaad::exp(B * delta * t) * cfaad::pow(B - A, delta);
+T Q = cfaad::pow(B * cfaad::exp((B - A) * t) - A, T(1.0) + delta);
+return -delta * A * B * P / Q;
+}
+
+template <typename T>
+inline T pMVK_t(double t, T A, T B, T delta, bool lower_tail = true) {
+T logS = delta * (cfaad::log(B - A) + B * t - cfaad::log(B * cfaad::exp((B - A) * t) - A));
+if (lower_tail) {
+  return T(1.0) - cfaad::exp(logS);
+} else {
+  return cfaad::exp(logS);
+}
+}
+
+template <typename T>
+inline T dexp_t(double t, T rate) {
+return (t < 0) ? T(0.0) : rate * cfaad::exp(-rate * t);
+}
+
+template <typename T>
+inline T pexp_t(double t, T rate, bool lower_tail = true) {
+if (t < 0) {
+  if (lower_tail) return T(0.0);
+  else return T(1.0);
+}
+
+if (lower_tail) {
+  return T(1.0) - cfaad::exp(-rate * t);
+} else {
+  return cfaad::exp(-rate * t);
+}
+}
+
+//' Do AD likelihood and gradient calculations for ScreeningModel1 (MVK + Exp)
+//' @name screening_model_1_likes_MVK_exp_grad
+//' @param inputs list of list with elements of t for the evaluation time, tj for the screening times and type for the type of likelihood (1=No cancer detected, 2=Screen-detected cancer, 3=Interval cancer)
+//' @param A MVK parameter A (active for AD)
+//' @param B MVK parameter B (active for AD)
+//' @param delta MVK parameter delta (active for AD)
+//' @param rate Exponential rate for clinical diagnosis (active for AD)
+//' @param beta false negative fraction for screening (active for AD)
+//' @param tol double for the numeric tolerance of the integration (default=1e-6)
+//' @param n_threads number of threads to use (default=0, auto-detects)
+//' @return list containing likelihoods and gradients
+//' @export
+// [[Rcpp::export]]
+Rcpp::List screening_model_1_likes_MVK_exp_grad(
+   Rcpp::List inputs, double A = -0.1, double B = 1e-4, 
+   double delta = 1e-4, double rate = 0.1, double beta = 0.05,
+   double tol = 1e-6, int n_threads = 0) {
+ 
+ using cfaad::Number;
+ 
+ size_t n_obs = inputs.size();
+ std::vector<double> likes_val(n_obs);
+ Rcpp::NumericMatrix gradients(n_obs, 5);
+ 
+ // Extract C++ types BEFORE OpenMP block to avoid R API multi-threading issues
+ struct SubjectData {
+   double t;
+   int type;
+   std::vector<double> ti;
+ };
+ 
+ std::vector<SubjectData> data(n_obs);
+ for (size_t i = 0; i < n_obs; i++) {
+   Rcpp::List input = inputs(i);
+   data[i].t = Rcpp::as<double>(input("t"));
+   data[i].type = Rcpp::as<int>(input("type"));
+   data[i].ti = Rcpp::as<std::vector<double>>(input("ti"));
+ }
+ 
+ double eps = 1.0e-12;
+ 
+#ifdef _OPENMP
+ if (n_threads <= 0) {
+   n_threads = omp_get_max_threads();
+ }
+#else
+ n_threads = 1;
+#endif
+ 
+#ifdef _OPENMP
+#pragma omp parallel num_threads(n_threads)
+#endif
+{
+// Thread local tape prevents data races and tape size explosion
+cfaad::Tape local_tape;
+Number::tape = &local_tape;
+
+#ifdef _OPENMP
+#pragma omp for schedule(static)
+#endif
+for (size_t i = 0; i < n_obs; ++i) {
+  
+  // REWIND: Optimal memory management (clears nodes but keeps block allocation)
+  Number::tape->rewind(); 
+  
+  Number A_n(A);         A_n.putOnTape();
+  Number B_n(B);         B_n.putOnTape();
+  Number delta_n(delta); delta_n.putOnTape();
+  Number rate_n(rate);   rate_n.putOnTape();
+  Number beta_n(beta);   beta_n.putOnTape();
+  
+  screening::ScreeningModel1<
+    std::function<Number(double)>, std::function<Number(double)>, 
+    std::function<Number(double)>, std::function<Number(double)>, Number> 
+    m(
+      [&](double u) { return dMVK_t<Number>(u, A_n, B_n, delta_n); },
+      [&](double u) { return pMVK_t<Number>(u, A_n, B_n, delta_n, false); },
+      [&](double u) { return dexp_t<Number>(u, rate_n); },
+      [&](double u) { return pexp_t<Number>(u, rate_n, false); },
+      beta_n, tol
+    );
+  
+  m.update(data[i].ti);
+  
+  Number res;
+  if (data[i].type == 1) {  
+    res = m.X(data[i].t) + m.Y(data[i].t);
+  } else if (data[i].type == 2) {  
+    res = m.Y(data[i].t - eps) * (Number(1.0) - m.beta);
+  } else if (data[i].type == 3) {  
+    res = m.I(data[i].t);
+  } else {
+    res = Number(-1.0);  
+  }
+  
+  // Backpropagate exactly one subject at a time
+  res.propagateToStart();
+  
+  likes_val[i] = res.value();
+  gradients(i, 0) = A_n.adjoint();
+  gradients(i, 1) = B_n.adjoint();
+  gradients(i, 2) = delta_n.adjoint();
+  gradients(i, 3) = rate_n.adjoint();
+  gradients(i, 4) = beta_n.adjoint();
+}
+
+// Clear out memory before the thread exits
+Number::tape->clear();
+}
+
+Rcpp::colnames(gradients) = Rcpp::CharacterVector::create("A", "B", "delta", "rate", "beta");
+
+return Rcpp::List::create(
+Rcpp::Named("likelihoods") = likes_val,
+Rcpp::Named("gradients") = gradients
+);
 }

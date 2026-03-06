@@ -6,7 +6,7 @@
 #' @param t double vector of times to evaluate
 #' @param ti double vector of screening times
 #' @param scale1 Weibull scale for onset
-#' @param shape Weibull shape for onset
+#' @param shape1 Weibull shape for onset
 #' @param shape2 Weibull shape for clinical diagnosis
 #' @param scale2 Weibull scale for clinical diagnosis
 #' @param beta false negative fraction for screening
@@ -30,7 +30,7 @@ screening_model_1_predictions <- function(t, ti, shape1 = 1, scale1 = 1, shape2 
 #' @name ScreeningModel1
 #' @param inputs list of list with elements of t for the evaluation time, tj for the screening times and type for the type of likelihood (1=No cancer detected, 2=Screen-detected cancer, 3=Interval cancer)
 #' @param scale1 Weibull scale for onset
-#' @param shape Weibull shape for onset
+#' @param shape1 Weibull shape for onset
 #' @param shape2 Weibull shape for clinical diagnosis
 #' @param scale2 Weibull scale for clinical diagnosis
 #' @param beta false negative fraction for screening
@@ -47,7 +47,7 @@ screening_model_1_likes <- function(inputs, shape1 = 1.0, scale1 = 1.0, shape2 =
 #' @param ti double vector of screening times
 #' @param yi double vector of screening times
 #' @param scale1 Weibull scale for onset
-#' @param shape Weibull shape for onset
+#' @param shape1 Weibull shape for onset
 #' @param shape2 Weibull shape for clinical diagnosis
 #' @param scale2 Weibull scale for clinical diagnosis
 #' @param beta0 intercept for logistic model for false negative fraction
@@ -72,7 +72,7 @@ screening_model_2_predictions <- function(t, ti, yi, shape1 = 1, scale1 = 1, sha
 #' @name ScreeningModel2
 #' @param inputs list of list with elements of t for the evaluation time, tj for the screening times and type for the type of likelihood (1=No cancer detected, 2=Screen-detected cancer, 3=Interval cancer)
 #' @param scale1 Weibull scale for onset
-#' @param shape Weibull shape for onset
+#' @param shape1 Weibull shape for onset
 #' @param shape2 Weibull shape for clinical diagnosis
 #' @param scale2 Weibull scale for clinical diagnosis
 #' @param beta0 intercept for logistic model for false negative fraction
@@ -89,8 +89,9 @@ screening_model_2_likes <- function(inputs, shape1 = 1.0, scale1 = 1.0, shape2 =
 #' @param t double vector of times to evaluate
 #' @param ti double vector of screening times
 #' @param yi double vector of screening times
+#' @param bxi integer vector of biopsy choices
 #' @param scale1 Weibull scale for onset
-#' @param shape Weibull shape for onset
+#' @param shape1 Weibull shape for onset
 #' @param shape2 Weibull shape for clinical diagnosis
 #' @param scale2 Weibull scale for clinical diagnosis
 #' @param beta0 intercept for logistic model for false negative fraction
@@ -116,7 +117,7 @@ screening_model_3_predictions <- function(t, ti, yi, bxi, shape1 = 1, scale1 = 1
 #' @name ScreeningModel3
 #' @param inputs list of list with elements of t for the evaluation time, tj for the screening times and type for the type of likelihood (1=No cancer detected, 2=Screen-detected cancer, 3=Interval cancer)
 #' @param scale1 Weibull scale for onset
-#' @param shape Weibull shape for onset
+#' @param shape1 Weibull shape for onset
 #' @param shape2 Weibull shape for clinical diagnosis
 #' @param scale2 Weibull scale for clinical diagnosis
 #' @param beta0 intercept for logistic model for false negative fraction
@@ -250,5 +251,21 @@ screening_model_1_likes_MVK_exp <- function(inputs, A = -0.1, B = 1e-4, delta = 
 #' @export
 screening_model_4_likes_loglin <- function(inputs, A = -0.1, B = 1e-4, delta = 1e-4, rate = 0.1, beta0 = 3.2892, beta1 = -0.5533, b0_psa = -1.6094, b1_psa = 0.0200, b2_psa = 0.1094, sigma_psa = 0.2879, PrFalseNegBx = 0.0, tol = 1e-6, return_type = "", weights = NULL, left_trunc = FALSE, incidence = NULL) {
     .Call('_screening_screening_model_4_likes_loglin', PACKAGE = 'screening', inputs, A, B, delta, rate, beta0, beta1, b0_psa, b1_psa, b2_psa, sigma_psa, PrFalseNegBx, tol, return_type, weights, left_trunc, incidence)
+}
+
+#' Do AD likelihood and gradient calculations for ScreeningModel1 (MVK + Exp)
+#' @name screening_model_1_likes_MVK_exp_grad
+#' @param inputs list of list with elements of t for the evaluation time, tj for the screening times and type for the type of likelihood (1=No cancer detected, 2=Screen-detected cancer, 3=Interval cancer)
+#' @param A MVK parameter A (active for AD)
+#' @param B MVK parameter B (active for AD)
+#' @param delta MVK parameter delta (active for AD)
+#' @param rate Exponential rate for clinical diagnosis (active for AD)
+#' @param beta false negative fraction for screening (active for AD)
+#' @param tol double for the numeric tolerance of the integration (default=1e-6)
+#' @param n_threads number of threads to use (default=0, auto-detects)
+#' @return list containing likelihoods and gradients
+#' @export
+screening_model_1_likes_MVK_exp_grad <- function(inputs, A = -0.1, B = 1e-4, delta = 1e-4, rate = 0.1, beta = 0.05, tol = 1e-6, n_threads = 0L) {
+    .Call('_screening_screening_model_1_likes_MVK_exp_grad', PACKAGE = 'screening', inputs, A, B, delta, rate, beta, tol, n_threads)
 }
 

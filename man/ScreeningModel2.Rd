@@ -38,6 +38,8 @@ screening_model_2_likes(
 
 \item{yi}{double vector of screening times}
 
+\item{shape1}{Weibull shape for onset}
+
 \item{scale1}{Weibull scale for onset}
 
 \item{shape2}{Weibull shape for clinical diagnosis}
@@ -53,8 +55,6 @@ screening_model_2_likes(
 \item{tol}{double for the numeric tolerance of the integration (default=1e-6)}
 
 \item{inputs}{list of list with elements of t for the evaluation time, tj for the screening times and type for the type of likelihood (1=No cancer detected, 2=Screen-detected cancer, 3=Interval cancer)}
-
-\item{shape}{Weibull shape for onset}
 }
 \value{
 data-frame with elements t, X, Y, Z (for state probabilities) and I (for incidence)

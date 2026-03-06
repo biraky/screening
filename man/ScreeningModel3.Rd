@@ -43,6 +43,10 @@ screening_model_3_likes(
 
 \item{yi}{double vector of screening times}
 
+\item{bxi}{integer vector of biopsy choices}
+
+\item{shape1}{Weibull shape for onset}
+
 \item{scale1}{Weibull scale for onset}
 
 \item{shape2}{Weibull shape for clinical diagnosis}
@@ -64,8 +68,6 @@ screening_model_3_likes(
 \item{return_type}{string, if "weighted_ll" returns sum of weighted log-likelihoods (default "")}
 
 \item{weights}{vector of weights corresponding to inputs, required if return_type is "weighted_ll"}
-
-\item{shape}{Weibull shape for onset}
 }
 \value{
 data-frame with elements t, X, Y, Z (for state probabilities) and I (for incidence)
