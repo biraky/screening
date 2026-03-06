@@ -281,6 +281,30 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// screening_model_4_likes_loglin_grad
+Rcpp::List screening_model_4_likes_loglin_grad(Rcpp::List inputs, double A, double B, double delta, double rate, double beta0, double beta1, double b0_psa, double b1_psa, double b2_psa, double sigma_psa, double PrFalseNegBx, double tol, int n_threads);
+RcppExport SEXP _screening_screening_model_4_likes_loglin_grad(SEXP inputsSEXP, SEXP ASEXP, SEXP BSEXP, SEXP deltaSEXP, SEXP rateSEXP, SEXP beta0SEXP, SEXP beta1SEXP, SEXP b0_psaSEXP, SEXP b1_psaSEXP, SEXP b2_psaSEXP, SEXP sigma_psaSEXP, SEXP PrFalseNegBxSEXP, SEXP tolSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::List >::type inputs(inputsSEXP);
+    Rcpp::traits::input_parameter< double >::type A(ASEXP);
+    Rcpp::traits::input_parameter< double >::type B(BSEXP);
+    Rcpp::traits::input_parameter< double >::type delta(deltaSEXP);
+    Rcpp::traits::input_parameter< double >::type rate(rateSEXP);
+    Rcpp::traits::input_parameter< double >::type beta0(beta0SEXP);
+    Rcpp::traits::input_parameter< double >::type beta1(beta1SEXP);
+    Rcpp::traits::input_parameter< double >::type b0_psa(b0_psaSEXP);
+    Rcpp::traits::input_parameter< double >::type b1_psa(b1_psaSEXP);
+    Rcpp::traits::input_parameter< double >::type b2_psa(b2_psaSEXP);
+    Rcpp::traits::input_parameter< double >::type sigma_psa(sigma_psaSEXP);
+    Rcpp::traits::input_parameter< double >::type PrFalseNegBx(PrFalseNegBxSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(screening_model_4_likes_loglin_grad(inputs, A, B, delta, rate, beta0, beta1, b0_psa, b1_psa, b2_psa, sigma_psa, PrFalseNegBx, tol, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_screening_screening_model_1_predictions", (DL_FUNC) &_screening_screening_model_1_predictions, 9},
@@ -296,6 +320,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_screening_screening_model_1_likes_MVK_exp", (DL_FUNC) &_screening_screening_model_1_likes_MVK_exp, 7},
     {"_screening_screening_model_4_likes_loglin", (DL_FUNC) &_screening_screening_model_4_likes_loglin, 17},
     {"_screening_screening_model_1_likes_MVK_exp_grad", (DL_FUNC) &_screening_screening_model_1_likes_MVK_exp_grad, 8},
+    {"_screening_screening_model_4_likes_loglin_grad", (DL_FUNC) &_screening_screening_model_4_likes_loglin_grad, 14},
     {NULL, NULL, 0}
 };
 

@@ -269,3 +269,29 @@ screening_model_1_likes_MVK_exp_grad <- function(inputs, A = -0.1, B = 1e-4, del
     .Call('_screening_screening_model_1_likes_MVK_exp_grad', PACKAGE = 'screening', inputs, A, B, delta, rate, beta, tol, n_threads)
 }
 
+#' Do AD likelihood and gradient calculations for ScreeningModel4
+#' (MVK onset + Exp sojourn + log-linear PSA with slope change after onset)
+#' @name screening_model_4_likes_loglin_grad
+#' @param inputs list of list with elements of t for the evaluation time,
+#' ti for screening times, yi for biomarker values, bxi for biopsy indicators,
+#' and type for the type of likelihood
+#' (1 = no cancer detected, 2 = screen-detected cancer, 3 = interval cancer)
+#' @param A MVK parameter A (active for AD)
+#' @param B MVK parameter B (active for AD)
+#' @param delta MVK parameter delta (active for AD)
+#' @param rate Exponential rate for clinical diagnosis (active for AD)
+#' @param beta0 intercept for logistic no-biopsy model (active for AD)
+#' @param beta1 slope of log(yi) for logistic no-biopsy model (active for AD)
+#' @param b0_psa intercept for log-linear PSA model (active for AD)
+#' @param b1_psa age slope for log-linear PSA model (active for AD)
+#' @param b2_psa slope increment after onset for log-linear PSA model (active for AD)
+#' @param sigma_psa standard deviation of log(PSA) (active for AD)
+#' @param PrFalseNegBx probability of a false negative biopsy | cancer, biopsy undertaken (active for AD)
+#' @param tol double for numeric integration tolerance
+#' @param n_threads number of threads to use (default = 0, auto-detects)
+#' @return list containing likelihoods and gradients
+#' @export
+screening_model_4_likes_loglin_grad <- function(inputs, A = -0.1, B = 1e-4, delta = 1e-4, rate = 0.1, beta0 = 3.2892, beta1 = -0.5533, b0_psa = -1.6094, b1_psa = 0.0200, b2_psa = 0.1094, sigma_psa = 0.2879, PrFalseNegBx = 0.0, tol = 1e-6, n_threads = 0L) {
+    .Call('_screening_screening_model_4_likes_loglin_grad', PACKAGE = 'screening', inputs, A, B, delta, rate, beta0, beta1, b0_psa, b1_psa, b2_psa, sigma_psa, PrFalseNegBx, tol, n_threads)
+}
+

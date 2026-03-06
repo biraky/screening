@@ -803,3 +803,202 @@ Rcpp::Named("likelihoods") = likes_val,
 Rcpp::Named("gradients") = gradients
 );
 }
+
+//' Do AD likelihood and gradient calculations for ScreeningModel4
+//' (MVK onset + Exp sojourn + log-linear PSA with slope change after onset)
+//' @name screening_model_4_likes_loglin_grad
+//' @param inputs list of list with elements of t for the evaluation time,
+//' ti for screening times, yi for biomarker values, bxi for biopsy indicators,
+//' and type for the type of likelihood
+//' (1 = no cancer detected, 2 = screen-detected cancer, 3 = interval cancer)
+//' @param A MVK parameter A (active for AD)
+//' @param B MVK parameter B (active for AD)
+//' @param delta MVK parameter delta (active for AD)
+//' @param rate Exponential rate for clinical diagnosis (active for AD)
+//' @param beta0 intercept for logistic no-biopsy model (active for AD)
+//' @param beta1 slope of log(yi) for logistic no-biopsy model (active for AD)
+//' @param b0_psa intercept for log-linear PSA model (active for AD)
+//' @param b1_psa age slope for log-linear PSA model (active for AD)
+//' @param b2_psa slope increment after onset for log-linear PSA model (active for AD)
+//' @param sigma_psa standard deviation of log(PSA) (active for AD)
+//' @param PrFalseNegBx probability of a false negative biopsy | cancer, biopsy undertaken (active for AD)
+//' @param tol double for numeric integration tolerance
+//' @param n_threads number of threads to use (default = 0, auto-detects)
+//' @return list containing likelihoods and gradients
+//' @export
+// [[Rcpp::export]]
+Rcpp::List screening_model_4_likes_loglin_grad(
+   Rcpp::List inputs,
+   double A = -0.1,
+   double B = 1e-4,
+   double delta = 1e-4,
+   double rate = 0.1,
+   double beta0 = 3.2892,
+   double beta1 = -0.5533,
+   double b0_psa = -1.6094,
+   double b1_psa = 0.0200,
+   double b2_psa = 0.1094,
+   double sigma_psa = 0.2879,
+   double PrFalseNegBx = 0.0,
+   double tol = 1e-6,
+   int n_threads = 0) {
+ 
+ using cfaad::Number;
+ 
+ size_t n_obs = inputs.size();
+ std::vector<double> likes_val(n_obs);
+ Rcpp::NumericMatrix gradients(n_obs, 11);
+ 
+ // Extract C++ data before OpenMP to avoid R API use inside worker threads
+ struct SubjectData {
+   double t;
+   int type;
+   std::vector<double> ti;
+   std::vector<double> yi;
+   std::vector<int> bxi;
+ };
+ 
+ std::vector<SubjectData> data(n_obs);
+ for (size_t i = 0; i < n_obs; i++) {
+   Rcpp::List input = inputs(i);
+   data[i].t   = Rcpp::as<double>(input("t"));
+   data[i].type = Rcpp::as<int>(input("type"));
+   data[i].ti  = Rcpp::as<std::vector<double>>(input("ti"));
+   data[i].yi  = Rcpp::as<std::vector<double>>(input("yi"));
+   data[i].bxi = Rcpp::as<std::vector<int>>(input("bxi"));
+ }
+ 
+#ifdef _OPENMP
+ if (n_threads <= 0) {
+   n_threads = omp_get_max_threads();
+ }
+#else
+ n_threads = 1;
+#endif
+ 
+#ifdef _OPENMP
+#pragma omp parallel num_threads(n_threads)
+#endif
+{
+// Thread-local tape prevents data races and tape growth across subjects
+cfaad::Tape local_tape;
+Number::tape = &local_tape;
+
+#ifdef _OPENMP
+#pragma omp for schedule(static)
+#endif
+for (size_t i = 0; i < n_obs; ++i) {
+  
+  // Reuse tape memory for each subject
+  Number::tape->rewind();
+  
+  Number A_n(A);                         A_n.putOnTape();
+  Number B_n(B);                         B_n.putOnTape();
+  Number delta_n(delta);                 delta_n.putOnTape();
+  Number rate_n(rate);                   rate_n.putOnTape();
+  Number beta0_n(beta0);                 beta0_n.putOnTape();
+  Number beta1_n(beta1);                 beta1_n.putOnTape();
+  Number b0_psa_n(b0_psa);               b0_psa_n.putOnTape();
+  Number b1_psa_n(b1_psa);               b1_psa_n.putOnTape();
+  Number b2_psa_n(b2_psa);               b2_psa_n.putOnTape();
+  Number sigma_psa_n(sigma_psa);         sigma_psa_n.putOnTape();
+  Number PrFalseNegBx_n(PrFalseNegBx);   PrFalseNegBx_n.putOnTape();
+  
+  screening::ScreeningModel4<
+    std::function<Number(double)>,
+    std::function<Number(double)>,
+    std::function<Number(double)>,
+    std::function<Number(double)>,
+    std::function<Number(double)>,
+    std::function<Number(double, double, Number)>,
+    Number
+  > m(
+      [&](double u) -> Number {
+        return dMVK_t<Number>(u, A_n, B_n, delta_n);
+      },
+      [&](double u) -> Number {
+        return pMVK_t<Number>(u, A_n, B_n, delta_n, false);
+      },
+      [&](double u) -> Number {
+        return dexp_t<Number>(u, rate_n);
+      },
+      [&](double u) -> Number {
+        return pexp_t<Number>(u, rate_n, false);
+      },
+      [&](double y) -> Number {
+        return Number(1.0) /
+          (Number(1.0) + cfaad::exp(-(beta0_n + beta1_n * std::log(y))));
+      },
+      [&](double y, double age, Number x) -> Number {
+        if (y <= 0.0) return Number(0.0);
+        
+        double years_after_onset = std::max(0.0, age - screening::as_double(x));
+        Number mu =
+          b0_psa_n +
+          b1_psa_n * (age - 35.0) +
+          b2_psa_n * years_after_onset;
+        
+        Number z = (Number(std::log(y)) - mu) / sigma_psa_n;
+        
+        return (Number(1.0) /
+                (Number(y) * sigma_psa_n * std::sqrt(2.0 * M_PI))) *
+                  cfaad::exp(Number(-0.5) * z * z);
+      },
+      PrFalseNegBx_n,
+      tol
+  );
+  
+  m.update(data[i].ti.data(), data[i].ti.size(),
+           data[i].yi.data(), data[i].yi.size(),
+           data[i].bxi.data(), data[i].bxi.size());
+  
+  Number res;
+  if (data[i].type == 1) {
+    res = m.like_neg_screening(data[i].t);
+  } else if (data[i].type == 2) {
+    res = m.like_screen_detected_cancer(data[i].t);
+  } else if (data[i].type == 3) {
+    res = m.like_interval_cancer(data[i].t);
+  } else {
+    res = Number(-1.0);
+  }
+  
+  // Exact reverse pass for this subject only
+  res.propagateToStart();
+  
+  likes_val[i]    = res.value();
+  gradients(i, 0) = A_n.adjoint();
+  gradients(i, 1) = B_n.adjoint();
+  gradients(i, 2) = delta_n.adjoint();
+  gradients(i, 3) = rate_n.adjoint();
+  gradients(i, 4) = beta0_n.adjoint();
+  gradients(i, 5) = beta1_n.adjoint();
+  gradients(i, 6) = b0_psa_n.adjoint();
+  gradients(i, 7) = b1_psa_n.adjoint();
+  gradients(i, 8) = b2_psa_n.adjoint();
+  gradients(i, 9) = sigma_psa_n.adjoint();
+  gradients(i,10) = PrFalseNegBx_n.adjoint();
+}
+
+Number::tape->clear();
+}
+
+Rcpp::colnames(gradients) = Rcpp::CharacterVector::create(
+"A",
+"B",
+"delta",
+"rate",
+"beta0",
+"beta1",
+"b0_psa",
+"b1_psa",
+"b2_psa",
+"sigma_psa",
+"PrFalseNegBx"
+);
+
+return Rcpp::List::create(
+Rcpp::Named("likelihoods") = likes_val,
+Rcpp::Named("gradients")   = gradients
+);
+}
