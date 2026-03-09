@@ -1002,3 +1002,169 @@ Rcpp::Named("likelihoods") = likes_val,
 Rcpp::Named("gradients")   = gradients
 );
 }
+
+//' Do AD likelihood and gradient calculations for ScreeningModel5
+//' (MVK onset + Exp sojourn + log-linear PSA + random effects for intercept)
+//' @name screening_model_5_likes_loglin_grad
+//' @param inputs list of list with elements of t, type, ti, yi, and bxi
+//' @param A MVK parameter A (active for AD)
+//' @param B MVK parameter B (active for AD)
+//' @param delta MVK parameter delta (active for AD)
+//' @param rate Exponential rate for clinical diagnosis (active for AD)
+//' @param beta0 intercept for logistic no-biopsy model (active for AD)
+//' @param beta1 slope of log(yi) for logistic no-biopsy model (active for AD)
+//' @param mu_b0 mean intercept for log-linear PSA model (active for AD)
+//' @param sigma_b0 standard deviation of intercept for log-linear PSA model (active for AD)
+//' @param b1_psa age slope for log-linear PSA model (active for AD)
+//' @param b2_psa slope increment after onset for log-linear PSA model (active for AD)
+//' @param sigma_psa standard deviation of log(PSA) (active for AD)
+//' @param PrFalseNegBx probability of a false negative biopsy (active for AD)
+//' @param tol double for numeric integration tolerance
+//' @param gh_nodes vector of Gauss-Hermite nodes
+//' @param gh_weights vector of Gauss-Hermite weights
+//' @param n_threads number of threads to use (default = 0, auto-detects)
+//' @return list containing likelihoods and gradients
+//' @export
+// [[Rcpp::export]]
+Rcpp::List screening_model_5_likes_loglin_grad(
+   Rcpp::List inputs,
+   double A = -0.1, double B = 1e-4, double delta = 1e-4, double rate = 0.1,
+   double beta0 = 3.2892, double beta1 = -0.5533,
+   double mu_b0 = -1.6094, double sigma_b0 = 0.2383,
+   double b1_psa = 0.0200, double b2_psa = 0.1094, double sigma_psa = 0.2879,
+   double PrFalseNegBx = 0.0, double tol = 1e-6,
+   Rcpp::Nullable<Rcpp::NumericVector> gh_nodes = R_NilValue,
+   Rcpp::Nullable<Rcpp::NumericVector> gh_weights = R_NilValue,
+   int n_threads = 0) {
+ 
+ using cfaad::Number;
+ 
+ std::vector<double> nodes_vec;
+ std::vector<double> weights_vec;
+ 
+ if (gh_nodes.isNotNull() && gh_weights.isNotNull()) {
+   nodes_vec = Rcpp::as<std::vector<double>>(gh_nodes);
+   weights_vec = Rcpp::as<std::vector<double>>(gh_weights);
+ } else {
+   Rcpp::stop("gh_nodes and gh_weights must be provided for Model 5.");
+ }
+ 
+ size_t n_obs = inputs.size();
+ std::vector<double> likes_val(n_obs);
+ Rcpp::NumericMatrix gradients(n_obs, 12); // Now 12 parameters
+ 
+ struct SubjectData {
+   double t; int type; std::vector<double> ti; std::vector<double> yi; std::vector<int> bxi;
+ };
+ 
+ std::vector<SubjectData> data(n_obs);
+ for (size_t i = 0; i < n_obs; i++) {
+   Rcpp::List input = inputs(i);
+   data[i].t   = Rcpp::as<double>(input("t"));
+   data[i].type = Rcpp::as<int>(input("type"));
+   data[i].ti  = Rcpp::as<std::vector<double>>(input("ti"));
+   data[i].yi  = Rcpp::as<std::vector<double>>(input("yi"));
+   data[i].bxi = Rcpp::as<std::vector<int>>(input("bxi"));
+ }
+ 
+#ifdef _OPENMP
+ if (n_threads <= 0) n_threads = omp_get_max_threads();
+#else
+ n_threads = 1;
+#endif
+ 
+#ifdef _OPENMP
+#pragma omp parallel num_threads(n_threads)
+#endif
+{
+cfaad::Tape local_tape;
+Number::tape = &local_tape;
+
+#ifdef _OPENMP
+#pragma omp for schedule(static)
+#endif
+for (size_t i = 0; i < n_obs; ++i) {
+  Number::tape->rewind();
+  
+  Number A_n(A);                         A_n.putOnTape();
+  Number B_n(B);                         B_n.putOnTape();
+  Number delta_n(delta);                 delta_n.putOnTape();
+  Number rate_n(rate);                   rate_n.putOnTape();
+  Number beta0_n(beta0);                 beta0_n.putOnTape();
+  Number beta1_n(beta1);                 beta1_n.putOnTape();
+  Number mu_b0_n(mu_b0);                 mu_b0_n.putOnTape();
+  Number sigma_b0_n(sigma_b0);           sigma_b0_n.putOnTape();
+  Number b1_psa_n(b1_psa);               b1_psa_n.putOnTape();
+  Number b2_psa_n(b2_psa);               b2_psa_n.putOnTape();
+  Number sigma_psa_n(sigma_psa);         sigma_psa_n.putOnTape();
+  Number PrFalseNegBx_n(PrFalseNegBx);   PrFalseNegBx_n.putOnTape();
+  
+  screening::ScreeningModel5<
+    std::function<Number(double)>, std::function<Number(double)>,
+    std::function<Number(double)>, std::function<Number(double)>,
+    std::function<Number(double)>, std::function<Number(double, double, Number, Number)>,
+    Number> m(
+        [&](double u) -> Number { return dMVK_t<Number>(u, A_n, B_n, delta_n); },
+        [&](double u) -> Number { return pMVK_t<Number>(u, A_n, B_n, delta_n, false); },
+        [&](double u) -> Number { return dexp_t<Number>(u, rate_n); },
+        [&](double u) -> Number { return pexp_t<Number>(u, rate_n, false); },
+        [&](double y) -> Number { return Number(1.0) / (Number(1.0) + cfaad::exp(-(beta0_n + beta1_n * std::log(y)))); },
+        [&](double y, double age, Number x, Number b0) -> Number {
+          if (y <= 0.0) return Number(0.0);
+          double years_after_onset = std::max(0.0, age - screening::as_double(x));
+          Number mu = b0 + b1_psa_n * (age - 35.0) + b2_psa_n * years_after_onset;
+          Number z = (Number(std::log(y)) - mu) / sigma_psa_n;
+          return (Number(1.0) / (Number(y) * sigma_psa_n * std::sqrt(2.0 * M_PI))) * cfaad::exp(Number(-0.5) * z * z);
+        },
+        PrFalseNegBx_n, mu_b0_n, sigma_b0_n, nodes_vec, weights_vec, tol
+    );
+  
+  m.update(data[i].ti.data(), data[i].ti.size(), data[i].yi.data(), data[i].yi.size(), data[i].bxi.data(), data[i].bxi.size());
+  
+  Number res(0.0);
+  for(size_t k = 0; k < nodes_vec.size(); ++k) {
+    Number b0_k = mu_b0_n + sigma_b0_n * Number(1.4142135623730951 * nodes_vec[k]);
+    Number cond_L(0.0);
+    
+    if (data[i].type == 1) {
+      cond_L = m.like_neg_screening_cond(data[i].t, b0_k);
+    } else if (data[i].type == 2) {
+      cond_L = m.like_screen_detected_cancer_cond(data[i].t, b0_k);
+    } else if (data[i].type == 3) {
+      cond_L = m.like_interval_cancer_cond(data[i].t, b0_k);
+    } else {
+      cond_L = Number(-1.0);
+    }
+    
+    res += cond_L * Number(weights_vec[k] * 0.5641895835477563);
+  }
+  
+  res.propagateToStart();
+  
+  likes_val[i]    = res.value();
+  gradients(i, 0) = A_n.adjoint();
+  gradients(i, 1) = B_n.adjoint();
+  gradients(i, 2) = delta_n.adjoint();
+  gradients(i, 3) = rate_n.adjoint();
+  gradients(i, 4) = beta0_n.adjoint();
+  gradients(i, 5) = beta1_n.adjoint();
+  gradients(i, 6) = mu_b0_n.adjoint();
+  gradients(i, 7) = sigma_b0_n.adjoint();
+  gradients(i, 8) = b1_psa_n.adjoint();
+  gradients(i, 9) = b2_psa_n.adjoint();
+  gradients(i,10) = sigma_psa_n.adjoint();
+  gradients(i,11) = PrFalseNegBx_n.adjoint();
+}
+
+Number::tape->clear();
+}
+
+Rcpp::colnames(gradients) = Rcpp::CharacterVector::create(
+"A", "B", "delta", "rate", "beta0", "beta1", "mu_b0", "sigma_b0", "b1_psa", "b2_psa", "sigma_psa", "PrFalseNegBx"
+);
+
+return Rcpp::List::create(
+Rcpp::Named("likelihoods") = likes_val,
+Rcpp::Named("gradients")   = gradients
+);
+}

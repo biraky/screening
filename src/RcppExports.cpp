@@ -305,6 +305,33 @@ BEGIN_RCPP
     return rcpp_result_gen;
 END_RCPP
 }
+// screening_model_5_likes_loglin_grad
+Rcpp::List screening_model_5_likes_loglin_grad(Rcpp::List inputs, double A, double B, double delta, double rate, double beta0, double beta1, double mu_b0, double sigma_b0, double b1_psa, double b2_psa, double sigma_psa, double PrFalseNegBx, double tol, Rcpp::Nullable<Rcpp::NumericVector> gh_nodes, Rcpp::Nullable<Rcpp::NumericVector> gh_weights, int n_threads);
+RcppExport SEXP _screening_screening_model_5_likes_loglin_grad(SEXP inputsSEXP, SEXP ASEXP, SEXP BSEXP, SEXP deltaSEXP, SEXP rateSEXP, SEXP beta0SEXP, SEXP beta1SEXP, SEXP mu_b0SEXP, SEXP sigma_b0SEXP, SEXP b1_psaSEXP, SEXP b2_psaSEXP, SEXP sigma_psaSEXP, SEXP PrFalseNegBxSEXP, SEXP tolSEXP, SEXP gh_nodesSEXP, SEXP gh_weightsSEXP, SEXP n_threadsSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< Rcpp::List >::type inputs(inputsSEXP);
+    Rcpp::traits::input_parameter< double >::type A(ASEXP);
+    Rcpp::traits::input_parameter< double >::type B(BSEXP);
+    Rcpp::traits::input_parameter< double >::type delta(deltaSEXP);
+    Rcpp::traits::input_parameter< double >::type rate(rateSEXP);
+    Rcpp::traits::input_parameter< double >::type beta0(beta0SEXP);
+    Rcpp::traits::input_parameter< double >::type beta1(beta1SEXP);
+    Rcpp::traits::input_parameter< double >::type mu_b0(mu_b0SEXP);
+    Rcpp::traits::input_parameter< double >::type sigma_b0(sigma_b0SEXP);
+    Rcpp::traits::input_parameter< double >::type b1_psa(b1_psaSEXP);
+    Rcpp::traits::input_parameter< double >::type b2_psa(b2_psaSEXP);
+    Rcpp::traits::input_parameter< double >::type sigma_psa(sigma_psaSEXP);
+    Rcpp::traits::input_parameter< double >::type PrFalseNegBx(PrFalseNegBxSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::NumericVector> >::type gh_nodes(gh_nodesSEXP);
+    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::NumericVector> >::type gh_weights(gh_weightsSEXP);
+    Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
+    rcpp_result_gen = Rcpp::wrap(screening_model_5_likes_loglin_grad(inputs, A, B, delta, rate, beta0, beta1, mu_b0, sigma_b0, b1_psa, b2_psa, sigma_psa, PrFalseNegBx, tol, gh_nodes, gh_weights, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
 
 static const R_CallMethodDef CallEntries[] = {
     {"_screening_screening_model_1_predictions", (DL_FUNC) &_screening_screening_model_1_predictions, 9},
@@ -321,6 +348,7 @@ static const R_CallMethodDef CallEntries[] = {
     {"_screening_screening_model_4_likes_loglin", (DL_FUNC) &_screening_screening_model_4_likes_loglin, 17},
     {"_screening_screening_model_1_likes_MVK_exp_grad", (DL_FUNC) &_screening_screening_model_1_likes_MVK_exp_grad, 8},
     {"_screening_screening_model_4_likes_loglin_grad", (DL_FUNC) &_screening_screening_model_4_likes_loglin_grad, 14},
+    {"_screening_screening_model_5_likes_loglin_grad", (DL_FUNC) &_screening_screening_model_5_likes_loglin_grad, 17},
     {NULL, NULL, 0}
 };
 

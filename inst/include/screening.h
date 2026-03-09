@@ -15,7 +15,7 @@ template <class T>
 inline double as_double(const T& x) { return x.value(); }
 
 /**
- Currently, we assume four types of screening models:
+ Currently, we assume five types of screening models:
  1. Screening episodes with end times of the episodes and whether a cancer was detected
  2. Screening episodes with end times of the episodes, the/a biomarker value and
  whether a cancer was detected
@@ -23,6 +23,8 @@ inline double as_double(const T& x) { return x.value(); }
  biopsy was undertaken and whether a cancer was detected
  4. Screening episodes with end times of the episodes, the/a biomarker value dependent on cancer onset, whether a
  biopsy was undertaken and whether a cancer was detected
+ 5. Screening episodes with end times of the episodes, the/a biomarker value dependent on cancer onset, whether a
+ biopsy was undertaken and whether a cancer was detected. Includes random effects for the biomarker intercept via GHQ.
  
  We have factored some functionality into `AbstractScreeningModel`.
  */
@@ -42,7 +44,7 @@ public:
   T_out error; // used in the integrations
   int offset; 
   
-  AbstractScreeningModel(T1 f1, T2 S1, T3 f2, T4 S2, double tol = 1.0e-6) 
+  AbstractScreeningModel(T1 f1, T2 S1, T3 f2, T4 S2, double tol = 1.0e-6)
     : f1(f1), S1(S1), f2(f2), S2(S2), tol(tol), fulln(0) { }
   
   virtual ~AbstractScreeningModel() { }
@@ -143,7 +145,6 @@ public:
     using namespace Rcpp;
     NumericMatrix out(t.size(), 4);
     for (size_t i=0; i<t.size(); i++) {
-      // Cast down to double for Rcpp output safely
       out(i,0) = static_cast<double>(X(t[i]));  
       out(i,1) = static_cast<double>(Y(t[i]));  
       out(i,2) = static_cast<double>(Z(t[i], true, simple));  
@@ -156,6 +157,7 @@ public:
                              _("I")=out.column(3));
   }
 };
+
 
 // A simple screening model with onset and clinical diagnosis
 template<class T1, class T2, class T3, class T4, class T_out = double>
@@ -816,6 +818,227 @@ public:
   }
 }
 
+return out;
+  }
+};
+
+// ScreeningModel5: ScreeningModel4 + Random effects for the biomarker intercept (b0)
+template<class T1, class T2, class T3, class T4, class T5, class T6, class T_out = double>
+class ScreeningModel5 : public AbstractScreeningModel<T1,T2,T3,T4,T_out> {
+public:
+  std::vector<double> yi;
+  std::vector<int> bxi;
+  T5 PrNoBx;
+  T6 biomarker_den;
+  T_out PrFalseNegBx;
+  T_out mu_b0;
+  T_out sigma_b0;
+  std::vector<double> gh_nodes;
+  std::vector<double> gh_weights;
+  
+  ScreeningModel5(T1 f1, T2 S1, T3 f2, T4 S2,
+                  T5 PrNoBx,
+                  T6 biomarker_den,
+                  T_out PrFalseNegBx,
+                  T_out mu_b0,
+                  T_out sigma_b0,
+                  std::vector<double> gh_nodes,
+                  std::vector<double> gh_weights,
+                  double tol = 1e-6) :
+    AbstractScreeningModel<T1,T2,T3,T4,T_out>(f1, S1, f2, S2, tol),
+    PrNoBx(PrNoBx),
+    biomarker_den(biomarker_den),
+    PrFalseNegBx(PrFalseNegBx),
+    mu_b0(mu_b0),
+    sigma_b0(sigma_b0),
+    gh_nodes(gh_nodes),
+    gh_weights(gh_weights) { }
+  
+  void update(const double* ti_ptr, size_t ti_n,
+              const double* yi_ptr, size_t yi_n,
+              const int* bxi_ptr, size_t bxi_n) {
+    AbstractScreeningModel<T1,T2,T3,T4,T_out>::update(ti_ptr, ti_n);
+    this->yi.assign(yi_ptr, yi_ptr + yi_n);
+    this->bxi.assign(bxi_ptr, bxi_ptr + bxi_n);
+  }
+  
+  T_out prod_history(size_t i, size_t j, T_out x, T_out b0, bool detected = false) {
+    T_out value(1.0);
+    for (size_t k = 0; k < j; k++) {
+      value *= biomarker_den(yi[k], this->tj[k + 1], x, b0);
+      T_out p_no_bx = PrNoBx(yi[k]);
+      T_out p_bx    = T_out(1.0) - p_no_bx;
+      
+      if (k < i) {
+        value *= (bxi[k] == 0 ? p_no_bx : p_bx);
+      } else {
+        value *= (bxi[k] == 0 ? p_no_bx : p_bx * (detected && k + 1 == j ? (T_out(1.0) - PrFalseNegBx) : PrFalseNegBx));
+      }
+    }
+    return value;
+  }
+  
+  T_out prod_beta(size_t /*i*/, size_t /*j*/, bool /*detected*/ = false) override {
+    return T_out(1.0);
+  }
+  
+  T_out like_neg_screening_cond(double s, T_out b0, bool reset = true) {
+    using namespace boost::math::quadrature;
+    if (reset) this->setup(s);
+    
+    T_out no_onset_history(1.0);
+    for (size_t k = 0; k < this->n; k++) {
+      no_onset_history *= biomarker_den(yi[k], this->tj[k + 1], T_out(1.0e9), b0);
+      T_out p_no_bx = PrNoBx(yi[k]);
+      no_onset_history *= (bxi[k] == 0 ? p_no_bx : (T_out(1.0) - p_no_bx));
+    }
+    
+    T_out value = this->S1(s) * no_onset_history;
+    for (size_t i = 0; i <= this->n; i++) {
+      auto fn = [&](T_out x_ad) -> T_out {
+        T_out K = prod_history(i, this->n, x_ad, b0, false);
+        double x = as_double(x_ad);
+        return this->f1(x) * this->S2(s - x) * K;
+      };
+      value += gauss_kronrod<T_out, 15>::integrate(fn, T_out(this->tj[i]), T_out(this->tj[i + 1]), 5, T_out(this->tol), &this->error);
+    }
+    return value;
+  }
+  
+  T_out like_screen_detected_cancer_cond(double t, T_out b0, bool reset = true) {
+    using namespace boost::math::quadrature;
+    if (reset) this->setup(t);
+    T_out value(0.0);
+    for (size_t i = 0; i <= this->n; i++) {
+      auto fn = [&](T_out x_ad) -> T_out {
+        T_out K = prod_history(i, this->n + this->offset, x_ad, b0, true);
+        double x = as_double(x_ad);
+        return this->f1(x) * this->S2(t - x) * K;
+      };
+      value += gauss_kronrod<T_out, 15>::integrate(fn, T_out(this->tj[i]), T_out(this->tj[i + 1]), 5, T_out(this->tol), &this->error);
+    }
+    return value;
+  }
+  
+  T_out like_interval_cancer_cond(double t, T_out b0, bool reset = true) {
+    using namespace boost::math::quadrature;
+    if (reset) this->setup(t);
+    T_out value(0.0);
+    for (size_t i = 0; i <= this->n; i++) {
+      auto fn = [&](T_out x_ad) -> T_out {
+        T_out K = prod_history(i, this->n + this->offset, x_ad, b0, false);
+        double x = as_double(x_ad);
+        return this->f1(x) * this->f2(t - x) * K;
+      };
+      value += gauss_kronrod<T_out, 15>::integrate(fn, T_out(this->tj[i]), T_out(this->tj[i + 1]), 5, T_out(this->tol), &this->error);
+    }
+    return value;
+  }
+  
+  std::vector<T_out> likes(Rcpp::List inputs, double eps = 1.0e-12) override {
+    return likes(inputs, eps, "", {});
+  }
+  
+  std::vector<T_out> likes(Rcpp::List inputs, double eps = 1.0e-12, std::string return_type = "", std::vector<double> weights = {}, bool left_trunc = false, Rcpp::Nullable<Rcpp::DataFrame> incidence = R_NilValue) {
+    bool weighted_ll = return_type == "weighted_ll";
+    std::vector<double> inc_years;
+    std::vector<std::vector<double>> inc_rates;
+    int n_inc_years = 0;
+    
+    if (left_trunc && incidence.isNotNull()) {
+      Rcpp::DataFrame df(incidence);
+      inc_years = Rcpp::as<std::vector<double>>(df["year"]);
+      n_inc_years = inc_years.size();
+      std::vector<std::string> age_cols = {"<40", "40-44", "45-49", "50-54", "55-59", "60-64", "65-69", "70-74", "75-79", "80-84", "85+"};
+      int n_age_grps = age_cols.size();
+      inc_rates.resize(n_inc_years, std::vector<double>(n_age_grps));
+      for (int j = 0; j < n_age_grps; ++j) {
+        std::vector<double> current_col = Rcpp::as<std::vector<double>>(df[age_cols[j]]);
+        for (int i = 0; i < n_inc_years; ++i) { inc_rates[i][j] = current_col[i] / 100000.0; }
+      }
+    }
+    
+    struct SubjectData {
+      double t; int type; double dob;
+      std::vector<double> ti; std::vector<double> yi; std::vector<int> bxi;
+    };
+    
+    size_t n_obs = inputs.size();
+    if (!weights.empty() && weights.size() != n_obs) Rcpp::stop("The size of weights must be equal to the size of inputs.");
+    
+    std::vector<SubjectData> data(n_obs);
+    std::vector<T_out> out(n_obs);
+    
+    for (size_t i = 0; i < n_obs; ++i) {
+      Rcpp::List subject = inputs[i];
+      data[i].t = Rcpp::as<double>(subject["t"]);
+      data[i].type = Rcpp::as<int>(subject["type"]);
+      data[i].dob = Rcpp::as<double>(subject["dob"]);
+      data[i].ti  = Rcpp::as<std::vector<double>>(subject["ti"]);
+      data[i].yi  = Rcpp::as<std::vector<double>>(subject["yi"]);
+      data[i].bxi = Rcpp::as<std::vector<int>>(subject["bxi"]);
+    }
+    
+#pragma omp parallel if(std::is_same<T_out, double>::value)
+{
+  ScreeningModel5 local_model = *this;
+  
+#pragma omp for schedule(static)
+  for (int i = 0; i < (int)n_obs; i++) {
+    local_model.update(data[i].ti.data(), data[i].ti.size(), data[i].yi.data(), data[i].yi.size(), data[i].bxi.data(), data[i].bxi.size());
+    
+    T_out L_i(0.0);
+    // Integration over random effect b0 using GHQ
+    for(size_t k = 0; k < local_model.gh_nodes.size(); ++k) {
+      T_out b0_k = local_model.mu_b0 + local_model.sigma_b0 * T_out(1.4142135623730951 * local_model.gh_nodes[k]);
+      T_out cond_L(0.0);
+      
+      if (data[i].type == 1) {
+        cond_L = local_model.like_neg_screening_cond(data[i].t, b0_k);
+      } else if (data[i].type == 2) {
+        cond_L = local_model.like_screen_detected_cancer_cond(data[i].t, b0_k);
+      } else if (data[i].type == 3) {
+        cond_L = local_model.like_interval_cancer_cond(data[i].t, b0_k);
+      } else {
+        cond_L = T_out(-1.0);
+      }
+      L_i += cond_L * T_out(local_model.gh_weights[k] * 0.5641895835477563); // weight / sqrt(pi)
+    }
+    out[i] = L_i;
+    
+    if (left_trunc) {
+      double cum_haz = 0.0;
+      for (int k = 0; k < n_inc_years; k++) {
+        double age_at_year = inc_years[k] - data[i].dob;
+        if (age_at_year < 0) continue;
+        int age_idx = 0;
+        if (age_at_year < 40.0) age_idx = 0;
+        else if (age_at_year >= 85.0) age_idx = 10;
+        else age_idx = (int)((age_at_year - 40.0) / 5.0) + 1;
+        cum_haz += inc_rates[k][age_idx];
+      }
+      
+      double X_Y_1997_2006 = std::exp(-cum_haz);
+      double date_1997_days = 9862.0;
+      double age_1997 = (date_1997_days - data[i].dob) / 365.25;
+      T_out X_Y_0_1997(1.0);
+      
+      if (age_1997 > 0) {
+        auto fn = [&](T_out x_ad) -> T_out {
+          double x = as_double(x_ad);
+          return local_model.f1(x) * local_model.S2(age_1997 - x);
+        };
+        X_Y_0_1997 = local_model.S1(age_1997) + boost::math::quadrature::gauss_kronrod<T_out, 15>::integrate(fn, T_out(0.0), T_out(age_1997), 5, T_out(local_model.tol), &local_model.error);
+      }
+      out[i] = out[i] / X_Y_0_1997 / T_out(X_Y_1997_2006);
+    }
+    
+    if (weighted_ll) {
+      using std::log;
+      out[i] = T_out(weights[i]) * log(out[i]);
+    }
+  }
+}
 return out;
   }
 };

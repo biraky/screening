@@ -295,3 +295,29 @@ screening_model_4_likes_loglin_grad <- function(inputs, A = -0.1, B = 1e-4, delt
     .Call('_screening_screening_model_4_likes_loglin_grad', PACKAGE = 'screening', inputs, A, B, delta, rate, beta0, beta1, b0_psa, b1_psa, b2_psa, sigma_psa, PrFalseNegBx, tol, n_threads)
 }
 
+#' Do AD likelihood and gradient calculations for ScreeningModel5
+#' (MVK onset + Exp sojourn + log-linear PSA + random effects for intercept)
+#' @name screening_model_5_likes_loglin_grad
+#' @param inputs list of list with elements of t, type, ti, yi, and bxi
+#' @param A MVK parameter A (active for AD)
+#' @param B MVK parameter B (active for AD)
+#' @param delta MVK parameter delta (active for AD)
+#' @param rate Exponential rate for clinical diagnosis (active for AD)
+#' @param beta0 intercept for logistic no-biopsy model (active for AD)
+#' @param beta1 slope of log(yi) for logistic no-biopsy model (active for AD)
+#' @param mu_b0 mean intercept for log-linear PSA model (active for AD)
+#' @param sigma_b0 standard deviation of intercept for log-linear PSA model (active for AD)
+#' @param b1_psa age slope for log-linear PSA model (active for AD)
+#' @param b2_psa slope increment after onset for log-linear PSA model (active for AD)
+#' @param sigma_psa standard deviation of log(PSA) (active for AD)
+#' @param PrFalseNegBx probability of a false negative biopsy (active for AD)
+#' @param tol double for numeric integration tolerance
+#' @param gh_nodes vector of Gauss-Hermite nodes
+#' @param gh_weights vector of Gauss-Hermite weights
+#' @param n_threads number of threads to use (default = 0, auto-detects)
+#' @return list containing likelihoods and gradients
+#' @export
+screening_model_5_likes_loglin_grad <- function(inputs, A = -0.1, B = 1e-4, delta = 1e-4, rate = 0.1, beta0 = 3.2892, beta1 = -0.5533, mu_b0 = -1.6094, sigma_b0 = 0.2383, b1_psa = 0.0200, b2_psa = 0.1094, sigma_psa = 0.2879, PrFalseNegBx = 0.0, tol = 1e-6, gh_nodes = NULL, gh_weights = NULL, n_threads = 0L) {
+    .Call('_screening_screening_model_5_likes_loglin_grad', PACKAGE = 'screening', inputs, A, B, delta, rate, beta0, beta1, mu_b0, sigma_b0, b1_psa, b2_psa, sigma_psa, PrFalseNegBx, tol, gh_nodes, gh_weights, n_threads)
+}
+
