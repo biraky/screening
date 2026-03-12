@@ -6,6 +6,52 @@
 #include <array>
 #include <boost/math/quadrature/gauss_kronrod.hpp>
 #include <omp.h>
+#define _USE_MATH_DEFINES
+#include <cmath>
+
+// -------------------------------------------------------------
+// AD Compiler Helpers for cfaad and Boost
+// -------------------------------------------------------------
+#include "cfaad/AAD.h"
+
+namespace cfaad {
+// Teach C++ streams how to print a cfaad::Number (required by Boost Error Handling)
+inline std::ostream& operator<<(std::ostream& os, const Number& n) {
+  os << n.value();
+  return os;
+}
+
+// Teach C++ how to take the absolute value of cfaad types (required by Boost Quadrature)
+inline Number abs(const Number& n) {
+  return n.value() < 0.0 ? Number(-n) : n;
+}
+template <typename L, typename R, typename OP>
+inline Number abs(const BinaryExpression<L, R, OP>& expr) {
+  Number n(expr);
+  return n.value() < 0.0 ? Number(-n) : n;
+}
+template <typename E, typename OP>
+inline Number abs(const UnaryExpression<E, OP>& expr) {
+  Number n(expr);
+  return n.value() < 0.0 ? Number(-n) : n;
+}
+}
+
+// Boost Quadrature needs numeric limits to compile generic AD types safely.
+namespace std {
+template <>
+struct numeric_limits<cfaad::Number> : public numeric_limits<double> {
+  static cfaad::Number min() { return cfaad::Number(numeric_limits<double>::min()); }
+  static cfaad::Number max() { return cfaad::Number(numeric_limits<double>::max()); }
+  static cfaad::Number lowest() { return cfaad::Number(numeric_limits<double>::lowest()); }
+  static cfaad::Number epsilon() { return cfaad::Number(numeric_limits<double>::epsilon()); }
+  static cfaad::Number round_error() { return cfaad::Number(numeric_limits<double>::round_error()); }
+  static cfaad::Number infinity() { return cfaad::Number(numeric_limits<double>::infinity()); }
+  static cfaad::Number quiet_NaN() { return cfaad::Number(numeric_limits<double>::quiet_NaN()); }
+  static cfaad::Number signaling_NaN() { return cfaad::Number(numeric_limits<double>::signaling_NaN()); }
+  static cfaad::Number denorm_min() { return cfaad::Number(numeric_limits<double>::denorm_min()); }
+};
+}
 
 namespace screening {
 
@@ -14,23 +60,118 @@ inline double as_double(double x) { return x; }
 template <class T>
 inline double as_double(const T& x) { return x.value(); }
 
-/**
- Currently, we assume five types of screening models:
- 1. Screening episodes with end times of the episodes and whether a cancer was detected
- 2. Screening episodes with end times of the episodes, the/a biomarker value and
- whether a cancer was detected
- 3. Screening episodes with end times of the episodes, the/a biomarker value, whether a
- biopsy was undertaken and whether a cancer was detected
- 4. Screening episodes with end times of the episodes, the/a biomarker value dependent on cancer onset, whether a
- biopsy was undertaken and whether a cancer was detected
- 5. Screening episodes with end times of the episodes, the/a biomarker value dependent on cancer onset, whether a
- biopsy was undertaken and whether a cancer was detected. Includes random effects for the biomarker intercept via GHQ.
- 
- We have factored some functionality into `AbstractScreeningModel`.
- */
+// -------------------------------------------------------------
+// Statistical Distributions (Standard and AD)
+// -------------------------------------------------------------
+namespace dist {
+// --- Weibull ---
+template <typename T>
+inline T dweibull_t(double x, T shape, T scale) {
+  if (x < 0) return T(0.0);
+  T xl = T(x) / scale;
+  return (shape / scale) * cfaad::pow(xl, shape - T(1.0)) * cfaad::exp(-cfaad::pow(xl, shape));
+}
+template <>
+inline double dweibull_t<double>(double x, double shape, double scale) {
+  if (x < 0) return 0.0;
+  double xl = x / scale;
+  return (shape / scale) * std::pow(xl, shape - 1.0) * std::exp(-std::pow(xl, shape));
+}
+
+template <typename T>
+inline T pweibull_t(double x, T shape, T scale, bool lower_tail = false) {
+  if (x < 0) {
+    if (lower_tail) return T(0.0);
+    else return T(1.0);
+  }
+  T val = cfaad::exp(-cfaad::pow(T(x) / scale, shape));
+  if (lower_tail) {
+    return T(1.0) - val;
+  } else {
+    return val;
+  }
+}
+template <>
+inline double pweibull_t<double>(double x, double shape, double scale, bool lower_tail) {
+  if (x < 0) return lower_tail ? 0.0 : 1.0;
+  return lower_tail ? 1.0 - std::exp(-std::pow(x / scale, shape)) : std::exp(-std::pow(x / scale, shape));
+}
+
+// --- MVK ---
+template <typename T>
+inline T dMVK_t(double t, T A, T B, T delta) {
+  T P = (cfaad::exp((B - A) * t) - T(1.0)) * cfaad::exp(B * delta * t) * cfaad::pow(B - A, delta);
+  T Q = cfaad::pow(B * cfaad::exp((B - A) * t) - A, T(1.0) + delta);
+  T val = -delta * A * B * P / Q;
+  return val;
+}
+template <>
+inline double dMVK_t<double>(double t, double A, double B, double delta) {
+  double P = std::expm1((B - A) * t) * std::exp(B * delta * t) * std::pow(B - A, delta);
+  double Q = std::pow(B * std::exp((B - A) * t) - A, 1.0 + delta);
+  double val = -delta * A * B * P / Q;
+  if (!std::isfinite(val)) val = 0.0;
+  return val;
+}
+
+template <typename T>
+inline T pMVK_t(double t, T A, T B, T delta, bool lower_tail = true) {
+  T logS = delta * (cfaad::log(B - A) + B * t - cfaad::log(B * cfaad::exp((B - A) * t) - A));
+  if (lower_tail) {
+    return T(1.0) - cfaad::exp(logS);
+  } else {
+    return cfaad::exp(logS);
+  }
+}
+template <>
+inline double pMVK_t<double>(double t, double A, double B, double delta, bool lower_tail) {
+  double logS = delta * (std::log(B - A) + B * t - std::log(B * std::exp((B - A) * t) - A));
+  return lower_tail ? -std::expm1(logS) : std::exp(logS);
+}
+
+// --- Exponential ---
+template <typename T>
+inline T dexp_t(double t, T rate) {
+  return (t < 0) ? T(0.0) : rate * cfaad::exp(-rate * t);
+}
+template <>
+inline double dexp_t<double>(double t, double rate) {
+  return (t < 0) ? 0.0 : rate * std::exp(-rate * t);
+}
+
+template <typename T>
+inline T pexp_t(double t, T rate, bool lower_tail = true) {
+  if (t < 0) {
+    if (lower_tail) return T(0.0);
+    else return T(1.0);
+  }
+  T val = cfaad::exp(-rate * t);
+  if (lower_tail) {
+    return T(1.0) - val;
+  } else {
+    return val;
+  }
+}
+template <>
+inline double pexp_t<double>(double t, double rate, bool lower_tail) {
+  if (t < 0) return lower_tail ? 0.0 : 1.0;
+  return lower_tail ? 1.0 - std::exp(-rate * t) : std::exp(-rate * t);
+}
+
+// --- Lognormal (Standard only, AD unmapped for erfc) ---
+inline double dlnorm_t(double t, double mulog, double sdlog) {
+  return (t <= 0) ? 0.0 : (1.0 / (t * sdlog * std::sqrt(2.0 * M_PI))) * std::exp(-0.5 * std::pow((std::log(t) - mulog) / sdlog, 2.0));
+}
+inline double plnorm_t(double t, double mulog, double sdlog, bool lower_tail = true) {
+  return (t <= 0) ? (lower_tail ? 0.0 : 1.0) : 0.5 * std::erfc(((lower_tail ? -1.0 : 1.0) * (std::log(t) - mulog)) / (sdlog * std::sqrt(2.0)));
+}
+}
+
+// -------------------------------------------------------------
+// Core Screening Models
+// -------------------------------------------------------------
 
 // Abstract templated class for a base screening model
-// T_out dictates the output type (double or cfaad::Number)
 template<class T1, class T2, class T3, class T4, class T_out = double>
 class AbstractScreeningModel {
 public:
@@ -159,7 +300,7 @@ public:
 };
 
 
-// A simple screening model with onset and clinical diagnosis
+// ScreeningModel1
 template<class T1, class T2, class T3, class T4, class T_out = double>
 class ScreeningModel1 : public AbstractScreeningModel<T1,T2,T3,T4,T_out> {
 public:
@@ -193,7 +334,6 @@ public:
       data[i].ti = as<std::vector<double>>(input("ti"));
     }
     
-    // AD Tape is thread-local, so disable OpenMP if T_out is not standard double
 #pragma omp parallel if(std::is_same<T_out, double>::value)
 {
   ScreeningModel1 local_model = *this;
@@ -221,42 +361,40 @@ return out;
 };
 
 
-// Second screening model with onset, clinical diagnosis and test sensitivity
-template<class T1, class T2, class T3, class T4, class T5>
-class ScreeningModel2 : public AbstractScreeningModel<T1,T2,T3,T4, double> {
+// ScreeningModel2
+template<class T1, class T2, class T3, class T4, class T5, class T_out = double>
+class ScreeningModel2 : public AbstractScreeningModel<T1,T2,T3,T4, T_out> {
 public:
   std::vector<double> yi;
   T5 PrFalseNeg;
   ScreeningModel2(T1 f1, T2 S1, T3 f2, T4 S2, T5 PrFalseNeg,
                   double tol = 1e-6) :
-    AbstractScreeningModel<T1,T2,T3,T4, double>(f1,S1,f2,S2, tol),     
+    AbstractScreeningModel<T1,T2,T3,T4, T_out>(f1,S1,f2,S2, tol),     
     PrFalseNeg(PrFalseNeg) {}
   void update(std::vector<double> ti,
               std::vector<double> yi) {
-    AbstractScreeningModel<T1,T2,T3,T4, double>::update(ti);
+    AbstractScreeningModel<T1,T2,T3,T4, T_out>::update(ti);
     this->yi=yi;
   }
   
-  // overload for openmp
   void update(const double* ti_ptr, size_t ti_n, 
               const double* yi_ptr, size_t yi_n) {
-    AbstractScreeningModel<T1,T2,T3,T4, double>::update(ti_ptr, ti_n);
+    AbstractScreeningModel<T1,T2,T3,T4, T_out>::update(ti_ptr, ti_n);
     this->yi.assign(yi_ptr, yi_ptr + yi_n);
   }
   
-  double prod_beta(size_t i, size_t j, bool detected = false) {
-    double value = 1.0;
-    // reminder: yi[k] is not zero-padded => represents a test at tj[k+1]==ti[k]
+  T_out prod_beta(size_t i, size_t j, bool detected = false) {
+    T_out value(1.0);
     for (size_t k=i; k<j; k++) {
-      value *= (detected && k+1==j ? 1.0-PrFalseNeg(yi[k]) : PrFalseNeg(yi[k]));
+      value *= (detected && k+1==j ? T_out(1.0)-PrFalseNeg(yi[k]) : PrFalseNeg(yi[k]));
     }
     return value;
   }
   
-  std::vector<double> likes(Rcpp::List inputs, double eps = 1.0e-12) {
+  std::vector<T_out> likes(Rcpp::List inputs, double eps = 1.0e-12) {
     using Rcpp::as;
     size_t n_obs = inputs.size();
-    std::vector<double> out(n_obs);
+    std::vector<T_out> out(n_obs);
     
     struct SubjectData {
       double t;
@@ -266,7 +404,6 @@ public:
     };
     
     std::vector<SubjectData> data(n_obs);
-    
     for (size_t i = 0; i < n_obs; i++) {
       Rcpp::List input = inputs(i);
       data[i].t = as<double>(input("t"));
@@ -275,7 +412,7 @@ public:
       data[i].yi = as<std::vector<double>>(input("yi"));
     }
     
-#pragma omp parallel 
+#pragma omp parallel if(std::is_same<T_out, double>::value)
 {
   ScreeningModel2 local_model = *this;
   
@@ -289,16 +426,16 @@ public:
     } 
     else if (data[i].type == 2) { 
       if (local_model.fulln > 0) {
-        out[i] = local_model.Y(data[i].t-eps) * (1 - local_model.PrFalseNeg(local_model.yi[local_model.n-1]));
+        out[i] = local_model.Y(data[i].t-eps) * (T_out(1.0) - local_model.PrFalseNeg(local_model.yi[local_model.n-1]));
       } else {
-        out[i] = 0.0; 
+        out[i] = T_out(0.0); 
       }
     }
     else if (data[i].type == 3) { 
       out[i] = local_model.I(data[i].t);
     } 
     else {
-      out[i] = -1.0;  
+      out[i] = T_out(-1.0);  
     }
   }
 }
@@ -307,25 +444,24 @@ return out;
 };
 
 
-// Third screening model with onset, clinical diagnosis and screening histories
-// and test sensitivity
-template<class T1, class T2, class T3, class T4, class T5>
-class ScreeningModel3 : public AbstractScreeningModel<T1,T2,T3,T4, double> {
+// ScreeningModel3
+template<class T1, class T2, class T3, class T4, class T5, class T_out = double>
+class ScreeningModel3 : public AbstractScreeningModel<T1,T2,T3,T4, T_out> {
 public:
   std::vector<double> yi; 
   std::vector<int> bxi; 
   T5 PrNoBx;
-  double PrFalseNegBx;
+  T_out PrFalseNegBx;
   
   ScreeningModel3(T1 f1, T2 S1, T3 f2, T4 S2,
                   T5 PrNoBx,
-                  double PrFalseNegBx,
+                  T_out PrFalseNegBx,
                   double tol = 1e-6) :
-    AbstractScreeningModel<T1,T2,T3,T4, double>(f1,S1,f2,S2,tol),
+    AbstractScreeningModel<T1,T2,T3,T4, T_out>(f1,S1,f2,S2,tol),
     PrNoBx(PrNoBx), PrFalseNegBx(PrFalseNegBx) { }
   
   void update(std::vector<double> ti, std::vector<double> yi, std::vector<int> bxi) {
-    AbstractScreeningModel<T1,T2,T3,T4, double>::update(ti);
+    AbstractScreeningModel<T1,T2,T3,T4, T_out>::update(ti);
     this->yi=yi;
     this->bxi=bxi;
   }
@@ -333,77 +469,80 @@ public:
   void update(const double* ti_ptr, size_t ti_n, 
               const double* yi_ptr, size_t yi_n, 
               const int* bxi_ptr, size_t bxi_n) {
-    AbstractScreeningModel<T1,T2,T3,T4, double>::update(ti_ptr, ti_n);
+    AbstractScreeningModel<T1,T2,T3,T4, T_out>::update(ti_ptr, ti_n);
     this->yi.assign(yi_ptr, yi_ptr + yi_n);
     this->bxi.assign(bxi_ptr, bxi_ptr + bxi_n);
   }
   
-  double prod_bx(size_t i, size_t j) {
-    double value = 1.0;
+  T_out prod_bx(size_t i, size_t j) {
+    T_out value(1.0);
     for (size_t k=i; k<j; k++)
-      value *= (bxi[k]==0 ? PrNoBx(yi[k]) : (1.0-PrNoBx(yi[k])));
+      value *= (bxi[k]==0 ? PrNoBx(yi[k]) : (T_out(1.0)-PrNoBx(yi[k])));
     return value;
   }
   
-  double prod_beta(size_t i, size_t j, bool detected = false) {
-    double value = 1.0;
+  T_out prod_beta(size_t i, size_t j, bool detected = false) {
+    T_out value(1.0);
     for (size_t k=i; k<j; k++)
-      value *= (bxi[k]==0 ? PrNoBx(yi[k]) : (1.0-PrNoBx(yi[k]))*(detected && k+1==j ? (1.0 - PrFalseNegBx) : PrFalseNegBx));
+      value *= (bxi[k]==0 ? PrNoBx(yi[k]) : (T_out(1.0)-PrNoBx(yi[k]))*(detected && k+1==j ? (T_out(1.0) - PrFalseNegBx) : PrFalseNegBx));
     return value;
   }
   
-  double like_neg_screening(double s, bool reset = true) {
+  T_out like_neg_screening(double s, bool reset = true) {
     using namespace boost::math::quadrature;
     if (reset) this->setup(s);
-    double value = this->S1(s)*prod_bx(0,this->n);
+    T_out value = this->S1(s)*prod_bx(0,this->n);
     for (size_t i=0; i<=this->n; i++) {
-      double K = prod_bx(0,i) * prod_beta(i,this->n);
-      auto fn = [&](double x) {
+      T_out K = prod_bx(0,i) * prod_beta(i,this->n);
+      auto fn = [&](T_out x_ad) -> T_out {
+        double x = as_double(x_ad);
         return this->f1(x)*this->S2(s-x) * K;
       };
-      value += gauss_kronrod<double, 15>::integrate(fn, this->tj[i], this->tj[i+1],
-                                                    5, this->tol, &this->error);
+      value += gauss_kronrod<T_out, 15>::integrate(fn, T_out(this->tj[i]), T_out(this->tj[i+1]),
+                                                   5, T_out(this->tol), &this->error);
     }
     return value;
   }
   
-  double like_screen_detected_cancer(double t, bool reset=true) {
+  T_out like_screen_detected_cancer(double t, bool reset=true) {
     using namespace boost::math::quadrature;
     if (reset) this->setup(t);
-    double value = 0.0;
+    T_out value(0.0);
     for (size_t i=0; i<=this->n; i++) {
-      double K = prod_bx(0,i) * prod_beta(i,this->n+this->offset,true);
-      auto fn = [&](double x) {
+      T_out K = prod_bx(0,i) * prod_beta(i,this->n+this->offset,true);
+      auto fn = [&](T_out x_ad) -> T_out {
+        double x = as_double(x_ad);
         return this->f1(x)*this->S2(t-x)*K;
       };
-      value += gauss_kronrod<double, 15>::integrate(fn, this->tj[i], this->tj[i+1], 5, this->tol, &this->error);
+      value += gauss_kronrod<T_out, 15>::integrate(fn, T_out(this->tj[i]), T_out(this->tj[i+1]), 5, T_out(this->tol), &this->error);
     }
     return value;
   }
   
-  double like_interval_cancer(double t, bool reset=true) {
+  T_out like_interval_cancer(double t, bool reset=true) {
     using namespace boost::math::quadrature;
     if (reset) this->setup(t);
-    double value = 0.0;
+    T_out value(0.0);
     for (size_t i=0; i<=this->n; i++) {
-      double K = prod_bx(0,i)*prod_beta(i,this->n+this->offset);
-      auto fn = [&](double x) {
+      T_out K = prod_bx(0,i)*prod_beta(i,this->n+this->offset);
+      auto fn = [&](T_out x_ad) -> T_out {
+        double x = as_double(x_ad);
         return this->f1(x)*this->f2(t-x)*K;
       };
-      value += gauss_kronrod<double, 15>::integrate(fn, this->tj[i], this->tj[i+1], 5, this->tol, &this->error);
+      value += gauss_kronrod<T_out, 15>::integrate(fn, T_out(this->tj[i]), T_out(this->tj[i+1]), 5, T_out(this->tol), &this->error);
     }
     return value;
   }
   
-  std::vector<double> likes(Rcpp::List inputs, double eps=1.0e-12) override {
+  std::vector<T_out> likes(Rcpp::List inputs, double eps=1.0e-12) override {
     return likes(inputs, eps, "", {}); 
   }
   
-  std::vector<double> likes(Rcpp::List inputs, double eps=1.0e-12,
-                            std::string return_type = "",
-                            std::vector<double> weights = {},
-                            bool left_trunc = false,
-                            Rcpp::Nullable<Rcpp::DataFrame> incidence = R_NilValue) {
+  std::vector<T_out> likes(Rcpp::List inputs, double eps=1.0e-12,
+                           std::string return_type = "",
+                           std::vector<double> weights = {},
+                           bool left_trunc = false,
+                           Rcpp::Nullable<Rcpp::DataFrame> incidence = R_NilValue) {
     
     bool weighted_ll = return_type == "weighted_ll";
     
@@ -448,7 +587,7 @@ public:
     }
     
     std::vector<SubjectData> data(n_obs);
-    std::vector<double> out(n_obs);
+    std::vector<T_out> out(n_obs);
     
     for(size_t i = 0; i < n_obs; ++i) {
       Rcpp::List subject = inputs[i];
@@ -465,7 +604,7 @@ public:
       data[i].bxi = Rcpp::as<std::vector<int>>(subject["bxi"]);
     }
     
-#pragma omp parallel 
+#pragma omp parallel if(std::is_same<T_out, double>::value)
 {
   using namespace boost::math::quadrature;
   ScreeningModel3 local_model = *this;
@@ -482,6 +621,8 @@ public:
       out[i] = local_model.like_screen_detected_cancer(data[i].t);
     } else if (data[i].type == 3) { 
       out[i] = local_model.like_interval_cancer(data[i].t);
+    } else {
+      out[i] = T_out(-1.0);
     }
     
     if(left_trunc) {
@@ -505,19 +646,23 @@ public:
       double date_1997_days = 9862.0;
       double age_1997 = (date_1997_days - data[i].dob) / 365.25;
       
-      double X_Y_0_1997 = 1.0;
+      T_out X_Y_0_1997(1.0);
       if (age_1997 > 0) {
-        auto fn = [&](double x) {
+        auto fn = [&](T_out x_ad) -> T_out {
+          double x = as_double(x_ad);
           return local_model.f1(x) * local_model.S2(age_1997 - x);
         };
         X_Y_0_1997 = local_model.S1(age_1997) + 
-          boost::math::quadrature::gauss_kronrod<double, 15>::integrate(fn, 0.0, age_1997, 5,
-                                                                        local_model.tol,
-                                                                        &local_model.error);
+          boost::math::quadrature::gauss_kronrod<T_out, 15>::integrate(fn, T_out(0.0), T_out(age_1997), 5,
+                                                                       T_out(local_model.tol),
+                                                                       &local_model.error);
       }
-      out[i] = out[i] / X_Y_0_1997 / X_Y_1997_2006;
+      out[i] = out[i] / X_Y_0_1997 / T_out(X_Y_1997_2006);
     }
-    if(weighted_ll) out[i] = weights[i]*std::log(out[i]);
+    if(weighted_ll) {
+      using std::log;
+      out[i] = T_out(weights[i]) * log(out[i]);
+    }
   }
 }
 
@@ -525,7 +670,7 @@ return out;
   }
 };
 
-// ScreeningModel4: ScreeningModel3 + biomarker density is dependent on onset
+// ScreeningModel4
 template<class T1, class T2, class T3, class T4, class T5, class T6, class T_out = double>
 class ScreeningModel4 : public AbstractScreeningModel<T1,T2,T3,T4,T_out> {
 public:
@@ -563,7 +708,6 @@ public:
   
   T_out prod_history(size_t i, size_t j, T_out x, bool detected = false) {
     T_out value(1.0);
-    
     for (size_t k = 0; k < j; k++) {
       value *= biomarker_den(yi[k], this->tj[k + 1], x);
       
@@ -578,7 +722,6 @@ public:
                     p_bx * (detected && k + 1 == j ? (T_out(1.0) - PrFalseNegBx) : PrFalseNegBx));
       }
     }
-    
     return value;
   }
   
@@ -588,90 +731,54 @@ public:
   
   T_out like_neg_screening(double s, bool reset = true) {
     using namespace boost::math::quadrature;
-    
     if (reset) this->setup(s);
     
     T_out no_onset_history(1.0);
     for (size_t k = 0; k < this->n; k++) {
       no_onset_history *= biomarker_den(yi[k], this->tj[k + 1], T_out(1.0e9));
-      
       T_out p_no_bx = PrNoBx(yi[k]);
       no_onset_history *= (bxi[k] == 0 ? p_no_bx : (T_out(1.0) - p_no_bx));
     }
     
     T_out value = this->S1(s) * no_onset_history;
-    
     for (size_t i = 0; i <= this->n; i++) {
       auto fn = [&](T_out x_ad) -> T_out {
         T_out K = prod_history(i, this->n, x_ad, false);
         double x = as_double(x_ad);
         return this->f1(x) * this->S2(s - x) * K;
       };
-      
-      value += gauss_kronrod<T_out, 15>::integrate(
-        fn,
-        T_out(this->tj[i]),
-        T_out(this->tj[i + 1]),
-        5,
-        T_out(this->tol),
-        &this->error
-      );
+      value += gauss_kronrod<T_out, 15>::integrate(fn, T_out(this->tj[i]), T_out(this->tj[i + 1]), 5, T_out(this->tol), &this->error);
     }
-    
     return value;
   }
   
   T_out like_screen_detected_cancer(double t, bool reset = true) {
     using namespace boost::math::quadrature;
-    
     if (reset) this->setup(t);
-    
     T_out value(0.0);
-    
     for (size_t i = 0; i <= this->n; i++) {
       auto fn = [&](T_out x_ad) -> T_out {
         T_out K = prod_history(i, this->n + this->offset, x_ad, true);
         double x = as_double(x_ad);
         return this->f1(x) * this->S2(t - x) * K;
       };
-      
-      value += gauss_kronrod<T_out, 15>::integrate(
-        fn,
-        T_out(this->tj[i]),
-        T_out(this->tj[i + 1]),
-        5,
-        T_out(this->tol),
-        &this->error
-      );
+      value += gauss_kronrod<T_out, 15>::integrate(fn, T_out(this->tj[i]), T_out(this->tj[i + 1]), 5, T_out(this->tol), &this->error);
     }
-    
     return value;
   }
   
   T_out like_interval_cancer(double t, bool reset = true) {
     using namespace boost::math::quadrature;
-    
     if (reset) this->setup(t);
-    
     T_out value(0.0);
-    
     for (size_t i = 0; i <= this->n; i++) {
       auto fn = [&](T_out x_ad) -> T_out {
         T_out K = prod_history(i, this->n + this->offset, x_ad, false);
         double x = as_double(x_ad);
         return this->f1(x) * this->f2(t - x) * K;
       };
-      
-      value += gauss_kronrod<T_out, 15>::integrate(
-        fn,
-        T_out(this->tj[i]),
-        T_out(this->tj[i + 1]),
-        5,
-        T_out(this->tol),
-        &this->error
-      );
+      value += gauss_kronrod<T_out, 15>::integrate(fn, T_out(this->tj[i]), T_out(this->tj[i + 1]), 5, T_out(this->tol), &this->error);
     }
-    
     return value;
   }
   
@@ -696,15 +803,12 @@ public:
       Rcpp::DataFrame df(incidence);
       inc_years = Rcpp::as<std::vector<double>>(df["year"]);
       n_inc_years = inc_years.size();
-      
       std::vector<std::string> age_cols = {
         "<40", "40-44", "45-49", "50-54", "55-59",
         "60-64", "65-69", "70-74", "75-79", "80-84", "85+"
       };
-      
       int n_age_grps = age_cols.size();
       inc_rates.resize(n_inc_years, std::vector<double>(n_age_grps));
-      
       for (int j = 0; j < n_age_grps; ++j) {
         std::vector<double> current_col = Rcpp::as<std::vector<double>>(df[age_cols[j]]);
         for (int i = 0; i < n_inc_years; ++i) {
@@ -714,16 +818,10 @@ public:
     }
     
     struct SubjectData {
-      double t;
-      int type;
-      std::vector<double> ti;
-      std::vector<double> yi;
-      std::vector<int> bxi;
-      double dob;
+      double t; int type; std::vector<double> ti; std::vector<double> yi; std::vector<int> bxi; double dob;
     };
     
     size_t n_obs = inputs.size();
-    
     if (!weights.empty() && weights.size() != n_obs) {
       Rcpp::stop("The size of weights must be equal to the size of inputs.");
     }
@@ -736,17 +834,11 @@ public:
       data[i].t = Rcpp::as<double>(subject["t"]);
       data[i].type = Rcpp::as<int>(subject["type"]);
       data[i].dob = Rcpp::as<double>(subject["dob"]);
-      
-      if (data[i].type > 3) {
-        Rcpp::stop("Only 3 screen types are supported");
-      }
-      
       data[i].ti  = Rcpp::as<std::vector<double>>(subject["ti"]);
       data[i].yi  = Rcpp::as<std::vector<double>>(subject["yi"]);
       data[i].bxi = Rcpp::as<std::vector<int>>(subject["bxi"]);
     }
     
-    // AD tape is thread-local, so disable OpenMP if T_out is not standard double
 #pragma omp parallel if(std::is_same<T_out, double>::value)
 {
   ScreeningModel4 local_model = *this;
@@ -757,38 +849,26 @@ public:
                        data[i].yi.data(), data[i].yi.size(),
                        data[i].bxi.data(), data[i].bxi.size());
     
-    if (data[i].type == 1) {
-      out[i] = local_model.like_neg_screening(data[i].t);
-    } else if (data[i].type == 2) {
-      out[i] = local_model.like_screen_detected_cancer(data[i].t);
-    } else if (data[i].type == 3) {
-      out[i] = local_model.like_interval_cancer(data[i].t);
-    } else {
-      out[i] = T_out(-1.0);
-    }
+    if (data[i].type == 1) { out[i] = local_model.like_neg_screening(data[i].t); } 
+    else if (data[i].type == 2) { out[i] = local_model.like_screen_detected_cancer(data[i].t); } 
+    else if (data[i].type == 3) { out[i] = local_model.like_interval_cancer(data[i].t); } 
+    else { out[i] = T_out(-1.0); }
     
     if (left_trunc) {
       double cum_haz = 0.0;
       for (int k = 0; k < n_inc_years; k++) {
         double age_at_year = inc_years[k] - data[i].dob;
         if (age_at_year < 0) continue;
-        
         int age_idx = 0;
-        if (age_at_year < 40.0) {
-          age_idx = 0;
-        } else if (age_at_year >= 85.0) {
-          age_idx = 10;
-        } else {
-          age_idx = (int)((age_at_year - 40.0) / 5.0) + 1;
-        }
-        
+        if (age_at_year < 40.0) age_idx = 0;
+        else if (age_at_year >= 85.0) age_idx = 10;
+        else age_idx = (int)((age_at_year - 40.0) / 5.0) + 1;
         cum_haz += inc_rates[k][age_idx];
       }
       
       double X_Y_1997_2006 = std::exp(-cum_haz);
       double date_1997_days = 9862.0;
       double age_1997 = (date_1997_days - data[i].dob) / 365.25;
-      
       T_out X_Y_0_1997(1.0);
       
       if (age_1997 > 0) {
@@ -796,33 +876,22 @@ public:
           double x = as_double(x_ad);
           return local_model.f1(x) * local_model.S2(age_1997 - x);
         };
-        
-        X_Y_0_1997 = local_model.S1(age_1997) +
-          boost::math::quadrature::gauss_kronrod<T_out, 15>::integrate(
-              fn,
-              T_out(0.0),
-              T_out(age_1997),
-              5,
-              T_out(local_model.tol),
-              &local_model.error
-          );
+        X_Y_0_1997 = local_model.S1(age_1997) + boost::math::quadrature::gauss_kronrod<T_out, 15>::integrate(
+          fn, T_out(0.0), T_out(age_1997), 5, T_out(local_model.tol), &local_model.error);
       }
-      
       out[i] = out[i] / X_Y_0_1997 / T_out(X_Y_1997_2006);
     }
-    
     if (weighted_ll) {
       using std::log;
       out[i] = T_out(weights[i]) * log(out[i]);
     }
   }
 }
-
 return out;
   }
 };
 
-// ScreeningModel5: ScreeningModel4 + Random effects for the biomarker intercept (b0)
+// ScreeningModel5
 template<class T1, class T2, class T3, class T4, class T5, class T6, class T_out = double>
 class ScreeningModel5 : public AbstractScreeningModel<T1,T2,T3,T4,T_out> {
 public:
@@ -837,22 +906,13 @@ public:
   std::vector<double> gh_weights;
   
   ScreeningModel5(T1 f1, T2 S1, T3 f2, T4 S2,
-                  T5 PrNoBx,
-                  T6 biomarker_den,
-                  T_out PrFalseNegBx,
-                  T_out mu_b0,
-                  T_out sigma_b0,
-                  std::vector<double> gh_nodes,
-                  std::vector<double> gh_weights,
+                  T5 PrNoBx, T6 biomarker_den, T_out PrFalseNegBx,
+                  T_out mu_b0, T_out sigma_b0,
+                  std::vector<double> gh_nodes, std::vector<double> gh_weights,
                   double tol = 1e-6) :
     AbstractScreeningModel<T1,T2,T3,T4,T_out>(f1, S1, f2, S2, tol),
-    PrNoBx(PrNoBx),
-    biomarker_den(biomarker_den),
-    PrFalseNegBx(PrFalseNegBx),
-    mu_b0(mu_b0),
-    sigma_b0(sigma_b0),
-    gh_nodes(gh_nodes),
-    gh_weights(gh_weights) { }
+    PrNoBx(PrNoBx), biomarker_den(biomarker_den), PrFalseNegBx(PrFalseNegBx),
+    mu_b0(mu_b0), sigma_b0(sigma_b0), gh_nodes(gh_nodes), gh_weights(gh_weights) { }
   
   void update(const double* ti_ptr, size_t ti_n,
               const double* yi_ptr, size_t yi_n,
@@ -988,21 +1048,15 @@ public:
     local_model.update(data[i].ti.data(), data[i].ti.size(), data[i].yi.data(), data[i].yi.size(), data[i].bxi.data(), data[i].bxi.size());
     
     T_out L_i(0.0);
-    // Integration over random effect b0 using GHQ
     for(size_t k = 0; k < local_model.gh_nodes.size(); ++k) {
       T_out b0_k = local_model.mu_b0 + local_model.sigma_b0 * T_out(1.4142135623730951 * local_model.gh_nodes[k]);
       T_out cond_L(0.0);
       
-      if (data[i].type == 1) {
-        cond_L = local_model.like_neg_screening_cond(data[i].t, b0_k);
-      } else if (data[i].type == 2) {
-        cond_L = local_model.like_screen_detected_cancer_cond(data[i].t, b0_k);
-      } else if (data[i].type == 3) {
-        cond_L = local_model.like_interval_cancer_cond(data[i].t, b0_k);
-      } else {
-        cond_L = T_out(-1.0);
-      }
-      L_i += cond_L * T_out(local_model.gh_weights[k] * 0.5641895835477563); // weight / sqrt(pi)
+      if (data[i].type == 1) { cond_L = local_model.like_neg_screening_cond(data[i].t, b0_k); } 
+      else if (data[i].type == 2) { cond_L = local_model.like_screen_detected_cancer_cond(data[i].t, b0_k); } 
+      else if (data[i].type == 3) { cond_L = local_model.like_interval_cancer_cond(data[i].t, b0_k); } 
+      else { cond_L = T_out(-1.0); }
+      L_i += cond_L * T_out(local_model.gh_weights[k] * 0.5641895835477563);
     }
     out[i] = L_i;
     
@@ -1032,7 +1086,6 @@ public:
       }
       out[i] = out[i] / X_Y_0_1997 / T_out(X_Y_1997_2006);
     }
-    
     if (weighted_ll) {
       using std::log;
       out[i] = T_out(weights[i]) * log(out[i]);
