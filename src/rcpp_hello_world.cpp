@@ -48,6 +48,9 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
    double o_A     = get_d(onset_pars, "A", -0.1);
    double o_B     = get_d(onset_pars, "B", 1e-4);
    double o_delta = get_d(onset_pars, "delta", 1e-4);
+   double o_alpha = get_d(onset_pars, "alpha", 1e-4);
+   double o_beta  = get_d(onset_pars, "beta", 0.1);
+   double o_kappa = get_d(onset_pars, "kappa", 0.01);
    
    std::string sojourn_dist = get_s(sojourn_pars, "dist", "exp");
    double s_shape = get_d(sojourn_pars, "shape", 1.0);
@@ -82,6 +85,9 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
      if (onset_dist == "weibull") {
        f1 = [=](double u){ return screening::dist::dweibull_t<double>(u, o_shape, o_scale); };
        S1 = [=](double u){ return screening::dist::pweibull_t<double>(u, o_shape, o_scale, false); };
+     } else if (onset_dist == "beard") {
+       f1 = [=](double u){ return screening::dist::dBeard_t<double>(u, o_alpha, o_beta, o_kappa); };
+       S1 = [=](double u){ return screening::dist::pBeard_t<double>(u, o_alpha, o_beta, o_kappa, false); };
      } else {
        f1 = [=](double u){ return screening::dist::dMVK_t<double>(u, o_A, o_B, o_delta); };
        S1 = [=](double u){ return screening::dist::pMVK_t<double>(u, o_A, o_B, o_delta, false); };
@@ -160,6 +166,7 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
    
    std::vector<std::string> param_names = {
      "o_shape", "o_scale", "o_A", "o_B", "o_delta",
+     "o_alpha", "o_beta", "o_kappa", 
      "s_shape", "s_scale", "s_rate",
      "b_beta", "b_PrFalseNeg", "b_PrFalseNegBx", "b_beta0", "b_beta1",
      "b_b0_psa", "b_b1_psa", "b_b2_psa", "b_sigma_psa", "b_mu_b0", "b_sigma_b0"
@@ -203,6 +210,7 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
     Number::tape->rewind();
     
     Number no_shape(o_shape), no_scale(o_scale), no_A(o_A), no_B(o_B), no_delta(o_delta);
+    Number no_alpha(o_alpha), no_beta(o_beta), no_kappa(o_kappa);
     Number ns_shape(s_shape), ns_scale(s_scale), ns_rate(s_rate);
     Number nb_beta(b_beta), nb_PrFalseNeg(b_PrFalseNeg), nb_PrFalseNegBx(b_PrFalseNegBx);
     Number nb_beta0(b_beta0), nb_beta1(b_beta1);
@@ -210,6 +218,7 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
     Number nb_mu_b0(b_mu_b0), nb_sigma_b0(b_sigma_b0);
     
     no_shape.putOnTape(); no_scale.putOnTape(); no_A.putOnTape(); no_B.putOnTape(); no_delta.putOnTape();
+    no_alpha.putOnTape(); no_beta.putOnTape(); no_kappa.putOnTape();
     ns_shape.putOnTape(); ns_scale.putOnTape(); ns_rate.putOnTape();
     nb_beta.putOnTape(); nb_PrFalseNeg.putOnTape(); nb_PrFalseNegBx.putOnTape();
     nb_beta0.putOnTape(); nb_beta1.putOnTape();
@@ -224,6 +233,9 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
     if (onset_dist == "weibull") {
       f1 = [&](double u){ return screening::dist::dweibull_t<Number>(u, no_shape, no_scale); };
       S1 = [&](double u){ return screening::dist::pweibull_t<Number>(u, no_shape, no_scale, false); };
+    } else if (onset_dist == "beard") {
+      f1 = [&](double u){ return screening::dist::dBeard_t<Number>(u, no_alpha, no_beta, no_kappa); };
+      S1 = [&](double u){ return screening::dist::pBeard_t<Number>(u, no_alpha, no_beta, no_kappa, false); };
     } else {
       f1 = [&](double u){ return screening::dist::dMVK_t<Number>(u, no_A, no_B, no_delta); };
       S1 = [&](double u){ return screening::dist::pMVK_t<Number>(u, no_A, no_B, no_delta, false); };
@@ -326,20 +338,23 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
     gradients(i, 2)  = no_A.adjoint() * grad_mult;
     gradients(i, 3)  = no_B.adjoint() * grad_mult;
     gradients(i, 4)  = no_delta.adjoint() * grad_mult;
-    gradients(i, 5)  = ns_shape.adjoint() * grad_mult;
-    gradients(i, 6)  = ns_scale.adjoint() * grad_mult;
-    gradients(i, 7)  = ns_rate.adjoint() * grad_mult;
-    gradients(i, 8)  = nb_beta.adjoint() * grad_mult;
-    gradients(i, 9)  = nb_PrFalseNeg.adjoint() * grad_mult;
-    gradients(i, 10) = nb_PrFalseNegBx.adjoint() * grad_mult;
-    gradients(i, 11) = nb_beta0.adjoint() * grad_mult;
-    gradients(i, 12) = nb_beta1.adjoint() * grad_mult;
-    gradients(i, 13) = nb_b0_psa.adjoint() * grad_mult;
-    gradients(i, 14) = nb_b1_psa.adjoint() * grad_mult;
-    gradients(i, 15) = nb_b2_psa.adjoint() * grad_mult;
-    gradients(i, 16) = nb_sigma_psa.adjoint() * grad_mult;
-    gradients(i, 17) = nb_mu_b0.adjoint() * grad_mult;
-    gradients(i, 18) = nb_sigma_b0.adjoint() * grad_mult;
+    gradients(i, 5)  = no_alpha.adjoint() * grad_mult;
+    gradients(i, 6)  = no_beta.adjoint() * grad_mult;
+    gradients(i, 7)  = no_kappa.adjoint() * grad_mult;
+    gradients(i, 8)  = ns_shape.adjoint() * grad_mult;
+    gradients(i, 9)  = ns_scale.adjoint() * grad_mult;
+    gradients(i, 10) = ns_rate.adjoint() * grad_mult;
+    gradients(i, 11) = nb_beta.adjoint() * grad_mult;
+    gradients(i, 12) = nb_PrFalseNeg.adjoint() * grad_mult;
+    gradients(i, 13) = nb_PrFalseNegBx.adjoint() * grad_mult;
+    gradients(i, 14) = nb_beta0.adjoint() * grad_mult;
+    gradients(i, 15) = nb_beta1.adjoint() * grad_mult;
+    gradients(i, 16) = nb_b0_psa.adjoint() * grad_mult;
+    gradients(i, 17) = nb_b1_psa.adjoint() * grad_mult;
+    gradients(i, 18) = nb_b2_psa.adjoint() * grad_mult;
+    gradients(i, 19) = nb_sigma_psa.adjoint() * grad_mult;
+    gradients(i, 20) = nb_mu_b0.adjoint() * grad_mult;
+    gradients(i, 21) = nb_sigma_b0.adjoint() * grad_mult;
   }
   Number::tape->clear();
 }

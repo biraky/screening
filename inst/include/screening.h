@@ -129,6 +129,43 @@ inline double pMVK_t<double>(double t, double A, double B, double delta, bool lo
   return lower_tail ? -std::expm1(logS) : std::exp(logS);
 }
 
+// --- Beard ---
+template <typename T>
+inline T dBeard_t(double t, T alpha, T beta, T kappa) {
+  if (t < 0) return T(0.0);
+  T e_bt = cfaad::exp(beta * t);
+  T h_t = (alpha * e_bt) / (T(1.0) + kappa * e_bt);
+  T S_t = cfaad::pow((T(1.0) + kappa * e_bt) / (T(1.0) + kappa), -alpha / (kappa * beta));
+  return h_t * S_t;
+}
+template <>
+inline double dBeard_t<double>(double t, double alpha, double beta, double kappa) {
+  if (t < 0) return 0.0;
+  double e_bt = std::exp(beta * t);
+  double h_t = (alpha * e_bt) / (1.0 + kappa * e_bt);
+  double S_t = std::pow((1.0 + kappa * e_bt) / (1.0 + kappa), -alpha / (kappa * beta));
+  return h_t * S_t;
+}
+
+template <typename T>
+inline T pBeard_t(double t, T alpha, T beta, T kappa, bool lower_tail = true) {
+  if (t < 0) return lower_tail ? T(0.0) : T(1.0);
+  T e_bt = cfaad::exp(beta * t);
+  T S_t = cfaad::pow((T(1.0) + kappa * e_bt) / (T(1.0) + kappa), -alpha / (kappa * beta));
+  if (lower_tail) {
+    return T(1.0) - S_t;
+  } else {
+    return S_t;
+  }
+}
+template <>
+inline double pBeard_t<double>(double t, double alpha, double beta, double kappa, bool lower_tail) {
+  if (t < 0) return lower_tail ? 0.0 : 1.0;
+  double e_bt = std::exp(beta * t);
+  double S_t = std::pow((1.0 + kappa * e_bt) / (1.0 + kappa), -alpha / (kappa * beta));
+  return lower_tail ? 1.0 - S_t : S_t;
+}
+
 // --- Exponential ---
 template <typename T>
 inline T dexp_t(double t, T rate) {
