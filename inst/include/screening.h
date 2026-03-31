@@ -9,19 +9,17 @@
 #define _USE_MATH_DEFINES
 #include <cmath>
 
-// -------------------------------------------------------------
-// AD Compiler Helpers for cfaad and Boost
-// -------------------------------------------------------------
+// AD compilers regquired by Boost integration====================================================
 #include "cfaad/AAD.h"
 
 namespace cfaad {
-// Teach C++ streams how to print a cfaad::Number (required by Boost Error Handling)
+// print a cfaad::Number (required by Boost Error Handling)
 inline std::ostream& operator<<(std::ostream& os, const Number& n) {
   os << n.value();
   return os;
 }
 
-// Teach C++ how to take the absolute value of cfaad types (required by Boost Quadrature)
+// absolute value of cfaad types (required by Boost Quadrature)
 inline Number abs(const Number& n) {
   return n.value() < 0.0 ? Number(-n) : n;
 }
@@ -37,7 +35,7 @@ inline Number abs(const UnaryExpression<E, OP>& expr) {
 }
 }
 
-// Boost Quadrature needs numeric limits to compile generic AD types safely.
+// Boost Quadrature needs numeric limits to compile generic AD types.
 namespace std {
 template <>
 struct numeric_limits<cfaad::Number> : public numeric_limits<double> {
@@ -52,10 +50,12 @@ struct numeric_limits<cfaad::Number> : public numeric_limits<double> {
   static cfaad::Number denorm_min() { return cfaad::Number(numeric_limits<double>::denorm_min()); }
 };
 }
+//================================================================================================================
+
 
 namespace screening {
 
-// Helper to extract double value safely depending on whether T is double or cfaad::Number
+// as_double: depending on whether T is double or cfaad::Number
 inline double as_double(double x) { return x; }
 template <class T>
 inline double as_double(const T& x) { return x.value(); }

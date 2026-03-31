@@ -174,13 +174,16 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
    NumericMatrix gradients(n_obs, param_names.size());
    colnames(gradients) = wrap(param_names);
    
-   struct SubjectData { double t; int type; std::vector<double> ti; std::vector<double> yi; std::vector<int> bxi; };
+   // --- Subject data now includes dob for left truncation ---
+   struct SubjectData { double t; int type; double dob; std::vector<double> ti; std::vector<double> yi; std::vector<int> bxi; };
    std::vector<SubjectData> data(n_obs);
    
    for (size_t i = 0; i < n_obs; i++) {
      Rcpp::List input = inputs(i);
      data[i].t = as<double>(input("t"));
      data[i].type = as<int>(input("type"));
+     data[i].dob = 0.0;
+     if (input.containsElementNamed("dob")) data[i].dob = as<double>(input("dob"));
      if (input.containsElementNamed("ti")) data[i].ti = as<std::vector<double>>(input("ti"));
      if (input.containsElementNamed("yi")) data[i].yi = as<std::vector<double>>(input("yi"));
      if (input.containsElementNamed("bxi")) data[i].bxi = as<std::vector<int>>(input("bxi"));
@@ -189,6 +192,29 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
    std::vector<double> w;
    bool use_weights = weights.isNotNull() && return_type == "weighted_ll";
    if (use_weights) w = as<std::vector<double>>(weights);
+   
+   // --- Parse incidence table for left truncation (shared across threads) ---
+   std::vector<double> inc_years;
+   std::vector<std::vector<double>> inc_rates;
+   int n_inc_years = 0;
+   
+   if (left_trunc && incidence.isNotNull()) {
+     Rcpp::DataFrame df(incidence);
+     inc_years = Rcpp::as<std::vector<double>>(df["year"]);
+     n_inc_years = inc_years.size();
+     std::vector<std::string> age_cols = {
+       "<40", "40-44", "45-49", "50-54", "55-59",
+       "60-64", "65-69", "70-74", "75-79", "80-84", "85+"
+     };
+     int n_age_grps = age_cols.size();
+     inc_rates.resize(n_inc_years, std::vector<double>(n_age_grps));
+     for (int j = 0; j < n_age_grps; ++j) {
+       std::vector<double> current_col = Rcpp::as<std::vector<double>>(df[age_cols[j]]);
+       for (int k = 0; k < n_inc_years; ++k) {
+         inc_rates[k][j] = current_col[k] / 100000.0;
+       }
+     }
+   }
    
 #ifdef _OPENMP
    if (n_threads <= 0) n_threads = omp_get_max_threads();
@@ -320,6 +346,43 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
         else cond_L = Number(-1.0);
         res += cond_L * Number(weights_vec[k] * 0.5641895835477563);
       }
+    }
+    
+    // ---------------------------------------------------------------
+    // Left truncation adjustment (AD-aware: gradients flow through)
+    // ---------------------------------------------------------------
+    if (left_trunc) {
+      // 1. Cumulative hazard from external incidence (pure double, no AD needed)
+      double cum_haz = 0.0;
+      for (int k = 0; k < n_inc_years; k++) {
+        double age_at_year = inc_years[k] - data[i].dob;
+        if (age_at_year < 0) continue;
+        int age_idx = 0;
+        if (age_at_year < 40.0) age_idx = 0;
+        else if (age_at_year >= 85.0) age_idx = 10;
+        else age_idx = (int)((age_at_year - 40.0) / 5.0) + 1;
+        cum_haz += inc_rates[k][age_idx];
+      }
+      double X_Y_1997_2006 = std::exp(-cum_haz);
+      
+      // 2. Model-based P(no diagnosis by 1997) — depends on onset/sojourn params, needs AD
+      double date_1997_days = 9862.0;
+      double age_1997 = (date_1997_days - data[i].dob) / 365.25;
+      
+      Number X_Y_0_1997(1.0);
+      if (age_1997 > 0) {
+        Number trunc_error(0.0);
+        auto trunc_fn = [&](Number x_ad) -> Number {
+          double x = screening::as_double(x_ad);
+          return f1(x) * S2(age_1997 - x);
+        };
+        X_Y_0_1997 = S1(age_1997) +
+          boost::math::quadrature::gauss_kronrod<Number, 15>::integrate(
+              trunc_fn, Number(0.0), Number(age_1997), 5, Number(tol), &trunc_error);
+      }
+      
+      // 3. Divide: L_i / [P(no dx by 1997) * P(no dx 1997-2006)]
+      res = res / X_Y_0_1997 / Number(X_Y_1997_2006);
     }
     
     res.propagateToStart();
