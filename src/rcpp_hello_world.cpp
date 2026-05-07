@@ -25,7 +25,10 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
 // -------------------------------------------------------------
 // Unified Rcpp Export Function
 // -------------------------------------------------------------
-//' @export
+//' Compute Likelihoods for Screening Models
+ //'
+ //' @name screening_model_likes
+ //' @export
  // [[Rcpp::export]]
  Rcpp::List screening_model_likes(
      int model,
@@ -38,8 +41,8 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
      std::string return_type = "",
      Rcpp::Nullable<Rcpp::NumericVector> weights = R_NilValue,
      bool left_trunc = false,
-     Rcpp::Nullable<Rcpp::DataFrame> incidence = R_NilValue,
-     int n_threads = 0) 
+     double lt_date = 0.0,
+     int n_threads = 0)
  {
    // 1. Extract parameters from nested lists
    std::string onset_dist = get_s(onset_pars, "dist", "mvk");
@@ -119,10 +122,11 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
      } else if (model == 3) {
        screening::ScreeningModel3<density_f, survival_f, density_f, survival_f, std::function<double(double)>, double> m(
            f1, S1, f2, S2, [=](double y){ return 1.0/(1.0+std::exp(-(b_beta0+b_beta1*std::log(y)))); }, b_PrFalseNegBx, tol);
-       likes_val = m.likes(inputs, 1e-12, return_type, w, left_trunc, incidence);
+       likes_val = m.likes(inputs, 1e-12, return_type, w, left_trunc, R_NilValue);
      } else if (model == 4) {
        screening::ScreeningModel4<density_f, survival_f, density_f, survival_f,
-                                  std::function<double(double)>, std::function<double(double, double, double)>, double> m(
+                                  std::function<double(double)>,
+                                  std::function<double(double, double, double)>, double> m(
                                       f1, S1, f2, S2,
                                       [=](double y) { return 1.0 / (1.0 + std::exp(-(b_beta0 + b_beta1 * std::log(y)))); },
                                       [=](double y, double age, double x) {
@@ -132,7 +136,8 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
                                         double z = (std::log(y) - mu) / b_sigma_psa;
                                         return (1.0 / (y * b_sigma_psa * std::sqrt(2.0 * M_PI))) * std::exp(-0.5 * z * z);
                                       }, b_PrFalseNegBx, tol);
-       likes_val = m.likes(inputs, 1e-12, return_type, w, left_trunc, incidence);
+       // OLD: likes_val = m.likes(inputs, 1e-12, return_type, w, left_trunc, incidence);
+       likes_val = m.likes(inputs, 1e-12, return_type, w, left_trunc, lt_date);
      } else if (model == 5) {
        if (!biom_pars.containsElementNamed("gh_nodes") || !biom_pars.containsElementNamed("gh_weights")) {
          Rcpp::stop("gh_nodes and gh_weights must be provided in biom_pars for Model 5.");
@@ -151,7 +156,7 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
                                         double z = (std::log(y) - mu) / b_sigma_psa;
                                         return (1.0 / (y * b_sigma_psa * std::sqrt(2.0 * M_PI))) * std::exp(-0.5 * z * z);
                                       }, b_PrFalseNegBx, b_mu_b0, b_sigma_b0, nodes_vec, weights_vec, tol);
-       likes_val = m.likes(inputs, 1e-12, return_type, w, left_trunc, incidence);
+       likes_val = m.likes(inputs, 1e-12, return_type, w, left_trunc, R_NilValue);
      } else {
        Rcpp::stop("Invalid model selection. Choose 1, 2, 3, 4, or 5.");
      }
@@ -193,28 +198,31 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
    bool use_weights = weights.isNotNull() && return_type == "weighted_ll";
    if (use_weights) w = as<std::vector<double>>(weights);
    
-   // --- Parse incidence table for left truncation (shared across threads) ---
-   std::vector<double> inc_years;
-   std::vector<std::vector<double>> inc_rates;
-   int n_inc_years = 0;
-   
-   if (left_trunc && incidence.isNotNull()) {
-     Rcpp::DataFrame df(incidence);
-     inc_years = Rcpp::as<std::vector<double>>(df["year"]);
-     n_inc_years = inc_years.size();
-     std::vector<std::string> age_cols = {
-       "<40", "40-44", "45-49", "50-54", "55-59",
-       "60-64", "65-69", "70-74", "75-79", "80-84", "85+"
-     };
-     int n_age_grps = age_cols.size();
-     inc_rates.resize(n_inc_years, std::vector<double>(n_age_grps));
-     for (int j = 0; j < n_age_grps; ++j) {
-       std::vector<double> current_col = Rcpp::as<std::vector<double>>(df[age_cols[j]]);
-       for (int k = 0; k < n_inc_years; ++k) {
-         inc_rates[k][j] = current_col[k] / 100000.0;
-       }
-     }
-   }
+   // /* =========================================================================
+   //  * OLD: incidence-based LT parsing
+   //  * -------------------------------------------------------------------------
+   //  * std::vector<double> inc_years;
+   //  * std::vector<std::vector<double>> inc_rates;
+   //  * int n_inc_years = 0;
+   //  *
+   //  * if (left_trunc && incidence.isNotNull()) {
+   //  *   Rcpp::DataFrame df(incidence);
+   //  *   inc_years = Rcpp::as<std::vector<double>>(df["year"]);
+   //  *   n_inc_years = inc_years.size();
+   //  *   std::vector<std::string> age_cols = {
+   //  *     "<40", "40-44", "45-49", "50-54", "55-59",
+   //  *     "60-64", "65-69", "70-74", "75-79", "80-84", "85+"
+   //  *   };
+   //  *   int n_age_grps = age_cols.size();
+   //  *   inc_rates.resize(n_inc_years, std::vector<double>(n_age_grps));
+   //  *   for (int j = 0; j < n_age_grps; ++j) {
+   //  *     std::vector<double> current_col = Rcpp::as<std::vector<double>>(df[age_cols[j]]);
+   //  *     for (int k = 0; k < n_inc_years; ++k) {
+   //  *       inc_rates[k][j] = current_col[k] / 100000.0;
+   //  *     }
+   //  *   }
+   //  * }
+   //  * ========================================================================= */
    
 #ifdef _OPENMP
    if (n_threads <= 0) n_threads = omp_get_max_threads();
@@ -350,40 +358,24 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
     
     // ---------------------------------------------------------------
     // Left truncation adjustment (AD-aware: gradients flow through)
+    // Simple LT at general lt_date: divide by P(X u Y at age = (lt_date - dob)/365.25)
     // ---------------------------------------------------------------
-    if (left_trunc) {
-      // 1. Cumulative hazard from external incidence (pure double, no AD needed)
-      double cum_haz = 0.0;
-      for (int k = 0; k < n_inc_years; k++) {
-        double age_at_year = inc_years[k] - data[i].dob;
-        if (age_at_year < 0) continue;
-        int age_idx = 0;
-        if (age_at_year < 40.0) age_idx = 0;
-        else if (age_at_year >= 85.0) age_idx = 10;
-        else age_idx = (int)((age_at_year - 40.0) / 5.0) + 1;
-        cum_haz += inc_rates[k][age_idx];
-      }
-      double X_Y_1997_2006 = std::exp(-cum_haz);
-      
-      // 2. Model-based P(no diagnosis by 1997) — depends on onset/sojourn params, needs AD
-      double date_1997_days = 9862.0;
-      double age_1997 = (date_1997_days - data[i].dob) / 365.25;
-      
-      Number X_Y_0_1997(1.0);
-      if (age_1997 > 0) {
+    if (left_trunc && lt_date > 0.0) {
+      double age_lt = (lt_date - data[i].dob) / 365.25;
+      Number denom(1.0);
+      if (age_lt > 0.0) {
         Number trunc_error(0.0);
         auto trunc_fn = [&](Number x_ad) -> Number {
           double x = screening::as_double(x_ad);
-          return f1(x) * S2(age_1997 - x);
+          return f1(x) * S2(age_lt - x);
         };
-        X_Y_0_1997 = S1(age_1997) +
+        denom = S1(age_lt) +
           boost::math::quadrature::gauss_kronrod<Number, 15>::integrate(
-              trunc_fn, Number(0.0), Number(age_1997), 5, Number(tol), &trunc_error);
+              trunc_fn, Number(0.0), Number(age_lt), 5, Number(tol), &trunc_error);
       }
-      
-      // 3. Divide: L_i / [P(no dx by 1997) * P(no dx 1997-2006)]
-      res = res / X_Y_0_1997 / Number(X_Y_1997_2006);
+      res = res / denom;
     }
+
     
     res.propagateToStart();
     double l_val = res.value();
@@ -426,4 +418,280 @@ return Rcpp::List::create(
   Rcpp::Named("likelihoods") = likes_val, 
   Rcpp::Named("gradients")   = gradients
 );
+ }
+
+// =============================================================================
+// Predictions: state-probability curves for a single screening schedule
+// =============================================================================
+//
+// Internal helpers live in an anonymous namespace so they have internal
+// linkage and do not pollute the translation unit's symbol table. They are
+// small and single-purpose by design: each builds or validates exactly one
+// piece of the public API's input. If screening_model_likes is ever
+// refactored to share this logic, these helpers can be promoted.
+
+namespace {
+
+// Bundle of (density, survival) function objects for a distribution.
+struct DistFns {
+  std::function<double(double)> f;
+  std::function<double(double)> S;
+};
+   
+   // Build (f1, S1) for the onset distribution from onset_pars$dist.
+   // Supported: "weibull", "beard", "mvk" (default).
+   inline DistFns make_onset_d(const Rcpp::List& pars) {
+     const std::string dist = get_s(pars, "dist", "mvk");
+     DistFns out;
+     if (dist == "weibull") {
+       const double shape = get_d(pars, "shape", 1.0);
+       const double scale = get_d(pars, "scale", 1.0);
+       out.f = [=](double u) { return screening::dist::dweibull_t<double>(u, shape, scale); };
+       out.S = [=](double u) { return screening::dist::pweibull_t<double>(u, shape, scale, false); };
+     } else if (dist == "beard") {
+       const double alpha = get_d(pars, "alpha", 1e-4);
+       const double beta  = get_d(pars, "beta",  0.1);
+       const double kappa = get_d(pars, "kappa", 0.01);
+       out.f = [=](double u) { return screening::dist::dBeard_t<double>(u, alpha, beta, kappa); };
+       out.S = [=](double u) { return screening::dist::pBeard_t<double>(u, alpha, beta, kappa, false); };
+     } else if (dist == "mvk") {
+       const double A     = get_d(pars, "A",     -0.1);
+       const double B     = get_d(pars, "B",     1e-4);
+       const double delta = get_d(pars, "delta", 1e-4);
+       out.f = [=](double u) { return screening::dist::dMVK_t<double>(u, A, B, delta); };
+       out.S = [=](double u) { return screening::dist::pMVK_t<double>(u, A, B, delta, false); };
+     } else {
+       Rcpp::stop("Unknown onset distribution '%s'. Supported: 'weibull', 'beard', 'mvk'.",
+                  dist);
+     }
+     return out;
+   }
+   
+   // Build (f2, S2) for the sojourn distribution from sojourn_pars$dist.
+   // Supported: "weibull", "exp" (default), "lognorm".
+   inline DistFns make_sojourn_d(const Rcpp::List& pars) {
+     const std::string dist = get_s(pars, "dist", "exp");
+     DistFns out;
+     if (dist == "weibull") {
+       const double shape = get_d(pars, "shape", 1.0);
+       const double scale = get_d(pars, "scale", 1.0);
+       out.f = [=](double u) { return screening::dist::dweibull_t<double>(u, shape, scale); };
+       out.S = [=](double u) { return screening::dist::pweibull_t<double>(u, shape, scale, false); };
+     } else if (dist == "lognorm") {
+       const double mulog = get_d(pars, "mulog", 2.3);
+       const double sdlog = get_d(pars, "sdlog", 0.6);
+       out.f = [=](double u) { return screening::dist::dlnorm_t(u, mulog, sdlog); };
+       out.S = [=](double u) { return screening::dist::plnorm_t(u, mulog, sdlog, false); };
+     } else if (dist == "exp") {
+       const double rate = get_d(pars, "rate", 0.1);
+       out.f = [=](double u) { return screening::dist::dexp_t<double>(u, rate); };
+       out.S = [=](double u) { return screening::dist::pexp_t<double>(u, rate, false); };
+     } else {
+       Rcpp::stop("Unknown sojourn distribution '%s'. Supported: 'weibull', 'exp', 'lognorm'.",
+                  dist);
+     }
+     return out;
+   }
+   
+   // Parsed screening history for a single subject.
+   struct HistoryData {
+     std::vector<double> ti;
+     std::vector<double> yi;   // populated for models >= 2
+     std::vector<int>    bxi;  // populated for models >= 3
+   };
+   
+   // Parse and validate the history list against the required fields for `model`.
+   // Throws (via Rcpp::stop) with an actionable message on any missing field or
+   // length mismatch.
+   inline HistoryData parse_history(const Rcpp::List& history, int model) {
+     HistoryData h;
+     if (!history.containsElementNamed("ti")) {
+       Rcpp::stop("'history' must contain a numeric element 'ti'.");
+     }
+     h.ti = Rcpp::as<std::vector<double>>(history["ti"]);
+     
+     if (model >= 2) {
+       if (!history.containsElementNamed("yi")) {
+         Rcpp::stop("'history' must contain numeric element 'yi' for model %d.", model);
+       }
+       h.yi = Rcpp::as<std::vector<double>>(history["yi"]);
+       if (h.yi.size() != h.ti.size()) {
+         Rcpp::stop("Length of 'yi' (%d) must equal length of 'ti' (%d).",
+                    (int) h.yi.size(), (int) h.ti.size());
+       }
+     }
+     if (model >= 3) {
+       if (!history.containsElementNamed("bxi")) {
+         Rcpp::stop("'history' must contain integer element 'bxi' for model %d.", model);
+       }
+       h.bxi = Rcpp::as<std::vector<int>>(history["bxi"]);
+       if (h.bxi.size() != h.ti.size()) {
+         Rcpp::stop("Length of 'bxi' (%d) must equal length of 'ti' (%d).",
+                    (int) h.bxi.size(), (int) h.ti.size());
+       }
+     }
+     return h;
+   }
+   
+ } // anonymous namespace
+
+//' State probability predictions for a screening model
+ //'
+ //' @description
+ //' Evaluates the marginal state probabilities \eqn{X} (healthy),
+ //' \eqn{Y} (preclinical), \eqn{Z} (diagnosed) and the instantaneous incidence
+ //' \eqn{I} across a vector of times for a single subject's screening
+ //' schedule. Useful for visualising state trajectories under different
+ //' screening regimes.
+ //'
+ //' @param model Integer identifying the screening model. Currently
+ //'   supported: \code{1}, \code{2}, \code{3}. Prediction is not supported
+ //'   for models 4 and 5; see Details.
+ //' @param t Numeric vector of evaluation times (e.g. ages). Must be
+ //'   non-empty.
+ //' @param history Named list describing the screening history. Must
+ //'   contain \code{ti} (numeric screening times). For \code{model = 2} must
+ //'   also contain \code{yi} (biomarker values). For \code{model = 3} must
+ //'   also contain \code{yi} and \code{bxi} (integer 0/1 biopsy indicators).
+ //'   When \code{yi} and \code{bxi} are required they must have the same
+ //'   length as \code{ti}.
+ //' @param onset_pars Named list of onset distribution parameters. Choose
+ //'   \code{dist} from \code{"weibull"}, \code{"beard"} or \code{"mvk"}
+ //'   (default). See \code{\link{screening_model_likes}} for the parameter
+ //'   names of each distribution.
+ //' @param sojourn_pars Named list of sojourn distribution parameters.
+ //'   Choose \code{dist} from \code{"weibull"}, \code{"exp"} (default) or
+ //'   \code{"lognorm"}.
+ //' @param biom_pars Named list of test-characteristic parameters:
+ //'   \itemize{
+ //'     \item Model 1: \code{beta} (constant false-negative fraction).
+ //'     \item Model 2: \code{beta0}, \code{beta1} (logistic model for the
+ //'       false-negative probability as a function of \code{log(yi)}).
+ //'     \item Model 3: \code{beta0}, \code{beta1}, \code{PrFalseNegBx}
+ //'       (false-negative biopsy probability given biopsy and cancer).
+ //'   }
+ //' @param simple Logical; if \code{TRUE} (default) \code{Z} is computed
+ //'   as the complement \code{1 - (X + Y)}, which is fast. If \code{FALSE},
+ //'   \code{Z} is computed by direct integration — slower, but useful as a
+ //'   numerical sanity check.
+ //' @param tol Positive numerical tolerance for the Gauss-Kronrod
+ //'   integrations. Default \code{1e-6}.
+ //'
+ //' @details
+ //' Models 4 and 5 route their screening-history contribution through a
+ //' biomarker density and (for model 5) a random intercept integrated by
+ //' Gauss-Hermite quadrature. The marginal state probabilities returned by
+ //' this function are not meaningful for those models; use
+ //' \code{\link{screening_model_likes}} instead.
+ //'
+ //' @return A \code{data.frame} with columns \code{t}, \code{X}, \code{Y},
+ //'   \code{Z} and \code{I}, each of length \code{length(t)}.
+ //'
+ //' @seealso \code{\link{screening_model_likes}}
+ //'
+ //' @examples
+ //' t <- seq(0, 30, length.out = 101)
+ //'
+ //' # No screening baseline
+ //' res0 <- screening_model_predictions(
+ //'     model = 1, t = t,
+ //'     history = list(ti = numeric(0)),
+ //'     onset_pars = list(dist = "weibull", shape = 1.5, scale = 20),
+ //'     sojourn_pars = list(dist = "weibull", shape = 1.5, scale = 10),
+ //'     biom_pars = list(beta = 0.4)
+ //' )
+ //'
+ //' # Four screens between ages 10 and 25
+ //' res <- screening_model_predictions(
+ //'     model = 1, t = t,
+ //'     history = list(ti = c(10, 15, 20, 25)),
+ //'     onset_pars = list(dist = "weibull", shape = 1.5, scale = 20),
+ //'     sojourn_pars = list(dist = "weibull", shape = 1.5, scale = 10),
+ //'     biom_pars = list(beta = 0.4)
+ //' )
+ //' head(res)
+ //'
+ //' \donttest{
+ //' op <- par(mfrow = c(1, 2))
+ //' matplot(res0$t, as.matrix(res0[, c("X", "Y", "Z")]),
+ //'         type = "l", lty = 1, col = 1:3,
+ //'         xlab = "age", ylab = "probability", main = "No screening")
+ //' matplot(res$t, as.matrix(res[, c("X", "Y", "Z")]),
+ //'         type = "l", lty = 1, col = 1:3,
+ //'         xlab = "age", ylab = "probability", main = "Screening")
+ //' legend("right", legend = c("X", "Y", "Z"), col = 1:3, lty = 1, bty = "n")
+ //' par(op)
+ //' }
+ //'
+ //' @name screening_model_predictions
+ //' @export
+ // [[Rcpp::export]]
+ Rcpp::DataFrame screening_model_predictions(
+     int model,
+     std::vector<double> t,
+     Rcpp::List history,
+     Rcpp::List onset_pars,
+     Rcpp::List sojourn_pars,
+     Rcpp::List biom_pars,
+     bool simple = true,
+     double tol = 1e-6)
+ {
+   // ---- input validation -----------------------------------------------------
+   if (model < 1 || model > 5) {
+     Rcpp::stop("'model' must be an integer between 1 and 5.");
+   }
+   if (model == 4 || model == 5) {
+     Rcpp::stop(
+       "Predictions are not supported for model %d; "
+       "use model 1, 2 or 3, or call screening_model_likes().",
+       model);
+   }
+   if (t.empty()) {
+     Rcpp::stop("'t' must be a non-empty numeric vector.");
+   }
+   if (tol <= 0.0) {
+     Rcpp::stop("'tol' must be positive (got %g).", tol);
+   }
+   
+   const HistoryData h      = parse_history(history, model);
+   const DistFns     onset  = make_onset_d(onset_pars);
+   const DistFns     sojn   = make_sojourn_d(sojourn_pars);
+   
+   using density_f  = std::function<double(double)>;
+   using survival_f = std::function<double(double)>;
+   
+   // ---- dispatch -------------------------------------------------------------
+   if (model == 1) {
+     const double beta = get_d(biom_pars, "beta", 0.05);
+     screening::ScreeningModel1<density_f, survival_f, density_f, survival_f, double>
+       m(onset.f, onset.S, sojn.f, sojn.S, beta, tol);
+     m.update(h.ti);
+     return m.predictions(t, simple);
+   }
+   
+   if (model == 2) {
+     const double beta0 = get_d(biom_pars, "beta0", -3.0);
+     const double beta1 = get_d(biom_pars, "beta1",  1.0);
+     auto pr_false_neg = [=](double y) {
+       return 1.0 / (1.0 + std::exp(-(beta0 + beta1 * std::log(y))));
+     };
+     screening::ScreeningModel2<density_f, survival_f, density_f, survival_f,
+                                std::function<double(double)>, double>
+       m(onset.f, onset.S, sojn.f, sojn.S, pr_false_neg, tol);
+     m.update(h.ti, h.yi);
+     return m.predictions(t, simple);
+   }
+   
+   // model == 3
+   const double beta0        = get_d(biom_pars, "beta0",        -3.0);
+   const double beta1        = get_d(biom_pars, "beta1",         1.0);
+   const double PrFalseNegBx = get_d(biom_pars, "PrFalseNegBx",  0.05);
+   auto pr_no_bx = [=](double y) {
+     return 1.0 / (1.0 + std::exp(-(beta0 + beta1 * std::log(y))));
+   };
+   screening::ScreeningModel3<density_f, survival_f, density_f, survival_f,
+                              std::function<double(double)>, double>
+     m(onset.f, onset.S, sojn.f, sojn.S, pr_no_bx, PrFalseNegBx, tol);
+   m.update(h.ti, h.yi, h.bxi);
+   return m.predictions(t, simple);
  }

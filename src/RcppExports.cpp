@@ -12,8 +12,8 @@ Rcpp::Rostream<false>& Rcpp::Rcerr = Rcpp::Rcpp_cerr_get();
 #endif
 
 // screening_model_likes
-Rcpp::List screening_model_likes(int model, Rcpp::List inputs, Rcpp::List onset_pars, Rcpp::List sojourn_pars, Rcpp::List biom_pars, bool grads, double tol, std::string return_type, Rcpp::Nullable<Rcpp::NumericVector> weights, bool left_trunc, Rcpp::Nullable<Rcpp::DataFrame> incidence, int n_threads);
-RcppExport SEXP _screening_screening_model_likes(SEXP modelSEXP, SEXP inputsSEXP, SEXP onset_parsSEXP, SEXP sojourn_parsSEXP, SEXP biom_parsSEXP, SEXP gradsSEXP, SEXP tolSEXP, SEXP return_typeSEXP, SEXP weightsSEXP, SEXP left_truncSEXP, SEXP incidenceSEXP, SEXP n_threadsSEXP) {
+Rcpp::List screening_model_likes(int model, Rcpp::List inputs, Rcpp::List onset_pars, Rcpp::List sojourn_pars, Rcpp::List biom_pars, bool grads, double tol, std::string return_type, Rcpp::Nullable<Rcpp::NumericVector> weights, bool left_trunc, double lt_date, int n_threads);
+RcppExport SEXP _screening_screening_model_likes(SEXP modelSEXP, SEXP inputsSEXP, SEXP onset_parsSEXP, SEXP sojourn_parsSEXP, SEXP biom_parsSEXP, SEXP gradsSEXP, SEXP tolSEXP, SEXP return_typeSEXP, SEXP weightsSEXP, SEXP left_truncSEXP, SEXP lt_dateSEXP, SEXP n_threadsSEXP) {
 BEGIN_RCPP
     Rcpp::RObject rcpp_result_gen;
     Rcpp::RNGScope rcpp_rngScope_gen;
@@ -27,15 +27,34 @@ BEGIN_RCPP
     Rcpp::traits::input_parameter< std::string >::type return_type(return_typeSEXP);
     Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::NumericVector> >::type weights(weightsSEXP);
     Rcpp::traits::input_parameter< bool >::type left_trunc(left_truncSEXP);
-    Rcpp::traits::input_parameter< Rcpp::Nullable<Rcpp::DataFrame> >::type incidence(incidenceSEXP);
+    Rcpp::traits::input_parameter< double >::type lt_date(lt_dateSEXP);
     Rcpp::traits::input_parameter< int >::type n_threads(n_threadsSEXP);
-    rcpp_result_gen = Rcpp::wrap(screening_model_likes(model, inputs, onset_pars, sojourn_pars, biom_pars, grads, tol, return_type, weights, left_trunc, incidence, n_threads));
+    rcpp_result_gen = Rcpp::wrap(screening_model_likes(model, inputs, onset_pars, sojourn_pars, biom_pars, grads, tol, return_type, weights, left_trunc, lt_date, n_threads));
+    return rcpp_result_gen;
+END_RCPP
+}
+// screening_model_predictions
+Rcpp::DataFrame screening_model_predictions(int model, std::vector<double> t, Rcpp::List history, Rcpp::List onset_pars, Rcpp::List sojourn_pars, Rcpp::List biom_pars, bool simple, double tol);
+RcppExport SEXP _screening_screening_model_predictions(SEXP modelSEXP, SEXP tSEXP, SEXP historySEXP, SEXP onset_parsSEXP, SEXP sojourn_parsSEXP, SEXP biom_parsSEXP, SEXP simpleSEXP, SEXP tolSEXP) {
+BEGIN_RCPP
+    Rcpp::RObject rcpp_result_gen;
+    Rcpp::RNGScope rcpp_rngScope_gen;
+    Rcpp::traits::input_parameter< int >::type model(modelSEXP);
+    Rcpp::traits::input_parameter< std::vector<double> >::type t(tSEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type history(historySEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type onset_pars(onset_parsSEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type sojourn_pars(sojourn_parsSEXP);
+    Rcpp::traits::input_parameter< Rcpp::List >::type biom_pars(biom_parsSEXP);
+    Rcpp::traits::input_parameter< bool >::type simple(simpleSEXP);
+    Rcpp::traits::input_parameter< double >::type tol(tolSEXP);
+    rcpp_result_gen = Rcpp::wrap(screening_model_predictions(model, t, history, onset_pars, sojourn_pars, biom_pars, simple, tol));
     return rcpp_result_gen;
 END_RCPP
 }
 
 static const R_CallMethodDef CallEntries[] = {
     {"_screening_screening_model_likes", (DL_FUNC) &_screening_screening_model_likes, 12},
+    {"_screening_screening_model_predictions", (DL_FUNC) &_screening_screening_model_predictions, 8},
     {NULL, NULL, 0}
 };
 

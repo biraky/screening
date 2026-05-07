@@ -820,7 +820,7 @@ public:
   }
   
   std::vector<T_out> likes(Rcpp::List inputs, double eps = 1.0e-12) override {
-    return likes(inputs, eps, "", {});
+    return likes(inputs, eps, "", {}, false, 0.0);
   }
   
   std::vector<T_out> likes(Rcpp::List inputs,
@@ -828,34 +828,42 @@ public:
                            std::string return_type = "",
                            std::vector<double> weights = {},
                            bool left_trunc = false,
-                           Rcpp::Nullable<Rcpp::DataFrame> incidence = R_NilValue) {
+                           double lt_date = 0.0) {   // days since 1970-01-01
     
     bool weighted_ll = return_type == "weighted_ll";
     
-    std::vector<double> inc_years;
-    std::vector<std::vector<double>> inc_rates;
-    int n_inc_years = 0;
-    
-    if (left_trunc && incidence.isNotNull()) {
-      Rcpp::DataFrame df(incidence);
-      inc_years = Rcpp::as<std::vector<double>>(df["year"]);
-      n_inc_years = inc_years.size();
-      std::vector<std::string> age_cols = {
-        "<40", "40-44", "45-49", "50-54", "55-59",
-        "60-64", "65-69", "70-74", "75-79", "80-84", "85+"
-      };
-      int n_age_grps = age_cols.size();
-      inc_rates.resize(n_inc_years, std::vector<double>(n_age_grps));
-      for (int j = 0; j < n_age_grps; ++j) {
-        std::vector<double> current_col = Rcpp::as<std::vector<double>>(df[age_cols[j]]);
-        for (int i = 0; i < n_inc_years; ++i) {
-          inc_rates[i][j] = current_col[i] / 100000.0;
-        }
-      }
-    }
+    /* =======================================================================
+     * OLD LT (incidence-based, 1997-anchored) — KEPT AS COMMENT FOR REFERENCE
+     * Replaced by simple LT below. The block below parsed an external NPCR
+     * incidence DataFrame and combined model-based truncation at 1997 with a
+     * registry-based correction 1997->2006.
+     * -----------------------------------------------------------------------
+     * std::vector<double> inc_years;
+     * std::vector<std::vector<double>> inc_rates;
+     * int n_inc_years = 0;
+     *
+     * if (left_trunc && incidence.isNotNull()) {
+     *   Rcpp::DataFrame df(incidence);
+     *   inc_years = Rcpp::as<std::vector<double>>(df["year"]);
+     *   n_inc_years = inc_years.size();
+     *   std::vector<std::string> age_cols = {
+     *     "<40", "40-44", "45-49", "50-54", "55-59",
+     *     "60-64", "65-69", "70-74", "75-79", "80-84", "85+"
+     *   };
+     *   int n_age_grps = age_cols.size();
+     *   inc_rates.resize(n_inc_years, std::vector<double>(n_age_grps));
+     *   for (int j = 0; j < n_age_grps; ++j) {
+     *     std::vector<double> current_col = Rcpp::as<std::vector<double>>(df[age_cols[j]]);
+     *     for (int i = 0; i < n_inc_years; ++i) {
+     *       inc_rates[i][j] = current_col[i] / 100000.0;
+     *     }
+     *   }
+     * }
+     * ======================================================================= */
     
     struct SubjectData {
-      double t; int type; std::vector<double> ti; std::vector<double> yi; std::vector<int> bxi; double dob;
+      double t; int type; std::vector<double> ti; std::vector<double> yi;
+      std::vector<int> bxi; double dob;
     };
     
     size_t n_obs = inputs.size();
@@ -868,12 +876,12 @@ public:
     
     for (size_t i = 0; i < n_obs; ++i) {
       Rcpp::List subject = inputs[i];
-      data[i].t = Rcpp::as<double>(subject["t"]);
+      data[i].t    = Rcpp::as<double>(subject["t"]);
       data[i].type = Rcpp::as<int>(subject["type"]);
-      data[i].dob = Rcpp::as<double>(subject["dob"]);
-      data[i].ti  = Rcpp::as<std::vector<double>>(subject["ti"]);
-      data[i].yi  = Rcpp::as<std::vector<double>>(subject["yi"]);
-      data[i].bxi = Rcpp::as<std::vector<int>>(subject["bxi"]);
+      data[i].dob  = Rcpp::as<double>(subject["dob"]);
+      data[i].ti   = Rcpp::as<std::vector<double>>(subject["ti"]);
+      data[i].yi   = Rcpp::as<std::vector<double>>(subject["yi"]);
+      data[i].bxi  = Rcpp::as<std::vector<int>>(subject["bxi"]);
     }
     
 #pragma omp parallel if(std::is_same<T_out, double>::value)
@@ -886,38 +894,62 @@ public:
                        data[i].yi.data(), data[i].yi.size(),
                        data[i].bxi.data(), data[i].bxi.size());
     
-    if (data[i].type == 1) { out[i] = local_model.like_neg_screening(data[i].t); } 
-    else if (data[i].type == 2) { out[i] = local_model.like_screen_detected_cancer(data[i].t); } 
-    else if (data[i].type == 3) { out[i] = local_model.like_interval_cancer(data[i].t); } 
-    else { out[i] = T_out(-1.0); }
+    if      (data[i].type == 1) { out[i] = local_model.like_neg_screening(data[i].t); }
+    else if (data[i].type == 2) { out[i] = local_model.like_screen_detected_cancer(data[i].t); }
+    else if (data[i].type == 3) { out[i] = local_model.like_interval_cancer(data[i].t); }
+    else                        { out[i] = T_out(-1.0); }
     
-    if (left_trunc) {
-      double cum_haz = 0.0;
-      for (int k = 0; k < n_inc_years; k++) {
-        double age_at_year = inc_years[k] - data[i].dob;
-        if (age_at_year < 0) continue;
-        int age_idx = 0;
-        if (age_at_year < 40.0) age_idx = 0;
-        else if (age_at_year >= 85.0) age_idx = 10;
-        else age_idx = (int)((age_at_year - 40.0) / 5.0) + 1;
-        cum_haz += inc_rates[k][age_idx];
-      }
-      
-      double X_Y_1997_2006 = std::exp(-cum_haz);
-      double date_1997_days = 9862.0;
-      double age_1997 = (date_1997_days - data[i].dob) / 365.25;
-      T_out X_Y_0_1997(1.0);
-      
-      if (age_1997 > 0) {
+    /* =====================================================================
+     * OLD LT BLOCK — COMMENTED OUT
+     * ---------------------------------------------------------------------
+     * if (left_trunc) {
+     *   double cum_haz = 0.0;
+     *   for (int k = 0; k < n_inc_years; k++) {
+     *     double age_at_year = inc_years[k] - data[i].dob;
+     *     if (age_at_year < 0) continue;
+     *     int age_idx = 0;
+     *     if (age_at_year < 40.0) age_idx = 0;
+     *     else if (age_at_year >= 85.0) age_idx = 10;
+     *     else age_idx = (int)((age_at_year - 40.0) / 5.0) + 1;
+     *     cum_haz += inc_rates[k][age_idx];
+     *   }
+     *   double X_Y_1997_2006 = std::exp(-cum_haz);
+     *   double date_1997_days = 9862.0;
+     *   double age_1997 = (date_1997_days - data[i].dob) / 365.25;
+     *   T_out X_Y_0_1997(1.0);
+     *   if (age_1997 > 0) {
+     *     auto fn = [&](T_out x_ad) -> T_out {
+     *       double x = as_double(x_ad);
+     *       return local_model.f1(x) * local_model.S2(age_1997 - x);
+     *     };
+     *     X_Y_0_1997 = local_model.S1(age_1997)
+     *                + boost::math::quadrature::gauss_kronrod<T_out, 15>::integrate(
+     *                    fn, T_out(0.0), T_out(age_1997), 5,
+     *                    T_out(local_model.tol), &local_model.error);
+     *   }
+     *   out[i] = out[i] / X_Y_0_1997 / T_out(X_Y_1997_2006);
+     * }
+     * ===================================================================== */
+    
+    // ---- NEW: simple LT at general lt_date ----
+    // Divide by P(X u Y at t_o), where t_o = age at lt_date for subject i.
+    // Numerator already includes pre-LT-date negative history via like_*.
+    if (left_trunc && lt_date > 0.0) {
+      double age_lt = (lt_date - data[i].dob) / 365.25;
+      T_out denom(1.0);
+      if (age_lt > 0.0) {
         auto fn = [&](T_out x_ad) -> T_out {
           double x = as_double(x_ad);
-          return local_model.f1(x) * local_model.S2(age_1997 - x);
+          return local_model.f1(x) * local_model.S2(age_lt - x);
         };
-        X_Y_0_1997 = local_model.S1(age_1997) + boost::math::quadrature::gauss_kronrod<T_out, 15>::integrate(
-          fn, T_out(0.0), T_out(age_1997), 5, T_out(local_model.tol), &local_model.error);
+        denom = local_model.S1(age_lt)
+          + boost::math::quadrature::gauss_kronrod<T_out, 15>::integrate(
+              fn, T_out(0.0), T_out(age_lt), 5,
+              T_out(local_model.tol), &local_model.error);
       }
-      out[i] = out[i] / X_Y_0_1997 / T_out(X_Y_1997_2006);
+      out[i] = out[i] / denom;
     }
+    
     if (weighted_ll) {
       using std::log;
       out[i] = T_out(weights[i]) * log(out[i]);
