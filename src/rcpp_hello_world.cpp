@@ -25,11 +25,25 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
 // -------------------------------------------------------------
 // Unified Rcpp Export Function
 // -------------------------------------------------------------
+
 //' Compute Likelihoods for Screening Models
- //'
- //' @name screening_model_likes
- //' @export
- // [[Rcpp::export]]
+//'
+//' @name screening_model_likes
+//' @param model integer; one of 1..5
+//' @param inputs list; per-subject screening histories
+//' @param onset_pars list; onset distribution parameters
+//' @param sojourn_pars list; sojourn distribution parameters
+//' @param biom_pars list; biomarker / test parameters
+//' @param grads logical; if TRUE return AD gradients
+//' @param tol numeric; integration tolerance
+//' @param return_type character; "" for raw likelihoods, "weighted_ll" for weighted log-likelihood
+//' @param weights numeric vector or NULL
+//' @param left_trunc logical; if TRUE apply left-truncation correction
+//' @param lt_date numeric; truncation date as days since 1970-01-01
+//' @param n_threads integer; OpenMP threads (0 = all available)
+//' @return A list with elements `likelihoods` and (if grads) `gradients`.
+//' @export
+// [[Rcpp::export]]
  Rcpp::List screening_model_likes(
      int model,
      Rcpp::List inputs,
