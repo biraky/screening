@@ -150,7 +150,6 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
                                         double z = (std::log(y) - mu) / b_sigma_psa;
                                         return (1.0 / (y * b_sigma_psa * std::sqrt(2.0 * M_PI))) * std::exp(-0.5 * z * z);
                                       }, b_PrFalseNegBx, tol);
-       // OLD: likes_val = m.likes(inputs, 1e-12, return_type, w, left_trunc, incidence);
        likes_val = m.likes(inputs, 1e-12, return_type, w, left_trunc, lt_date);
      } else if (model == 5) {
        if (!biom_pars.containsElementNamed("gh_nodes") || !biom_pars.containsElementNamed("gh_weights")) {
@@ -212,32 +211,6 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
    bool use_weights = weights.isNotNull() && return_type == "weighted_ll";
    if (use_weights) w = as<std::vector<double>>(weights);
    
-   // /* =========================================================================
-   //  * OLD: incidence-based LT parsing
-   //  * -------------------------------------------------------------------------
-   //  * std::vector<double> inc_years;
-   //  * std::vector<std::vector<double>> inc_rates;
-   //  * int n_inc_years = 0;
-   //  *
-   //  * if (left_trunc && incidence.isNotNull()) {
-   //  *   Rcpp::DataFrame df(incidence);
-   //  *   inc_years = Rcpp::as<std::vector<double>>(df["year"]);
-   //  *   n_inc_years = inc_years.size();
-   //  *   std::vector<std::string> age_cols = {
-   //  *     "<40", "40-44", "45-49", "50-54", "55-59",
-   //  *     "60-64", "65-69", "70-74", "75-79", "80-84", "85+"
-   //  *   };
-   //  *   int n_age_grps = age_cols.size();
-   //  *   inc_rates.resize(n_inc_years, std::vector<double>(n_age_grps));
-   //  *   for (int j = 0; j < n_age_grps; ++j) {
-   //  *     std::vector<double> current_col = Rcpp::as<std::vector<double>>(df[age_cols[j]]);
-   //  *     for (int k = 0; k < n_inc_years; ++k) {
-   //  *       inc_rates[k][j] = current_col[k] / 100000.0;
-   //  *     }
-   //  *   }
-   //  * }
-   //  * ========================================================================= */
-   
 #ifdef _OPENMP
    if (n_threads <= 0) n_threads = omp_get_max_threads();
 #else
@@ -297,6 +270,11 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
     }
     
     Number res(0.0);
+    Number denom(1.0);
+    double age_lt = 0.0;
+    if (left_trunc && lt_date > 0.0) {
+      age_lt = (lt_date - data[i].dob) / 365.25;
+    }
     
     if (model == 1) {
       screening::ScreeningModel1<density_ad_f, survival_ad_f, density_ad_f, survival_ad_f, Number> m(f1, S1, f2, S2, nb_beta, tol);
@@ -305,6 +283,8 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
       else if (data[i].type == 2) res = m.Y(data[i].t - 1e-12) * (Number(1.0) - m.beta);
       else if (data[i].type == 3) res = m.I(data[i].t);
       else res = Number(-1.0);
+      
+      if (age_lt > 1e-6) denom = m.X(age_lt) + m.Y(age_lt);
     } 
     else if (model == 2) {
       screening::ScreeningModel2<density_ad_f, survival_ad_f, density_ad_f, survival_ad_f, std::function<Number(double)>, Number> m(
@@ -314,6 +294,8 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
       else if (data[i].type == 2) res = (m.fulln > 0) ? m.Y(data[i].t - 1e-12) * (Number(1.0) - m.PrFalseNeg(m.yi[m.n-1])) : Number(0.0);
       else if (data[i].type == 3) res = m.I(data[i].t);
       else res = Number(-1.0);
+      
+      if (age_lt > 1e-6) denom = m.X(age_lt) + m.Y(age_lt);
     } 
     else if (model == 3) {
       screening::ScreeningModel3<density_ad_f, survival_ad_f, density_ad_f, survival_ad_f, std::function<Number(double)>, Number> m(
@@ -323,6 +305,8 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
       else if (data[i].type == 2) res = m.like_screen_detected_cancer(data[i].t);
       else if (data[i].type == 3) res = m.like_interval_cancer(data[i].t);
       else res = Number(-1.0);
+      
+      if (age_lt > 1e-6) denom = m.like_neg_screening(age_lt);
     } 
     else if (model == 4) {
       screening::ScreeningModel4<density_ad_f, survival_ad_f, density_ad_f, survival_ad_f,
@@ -341,6 +325,8 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
       else if (data[i].type == 2) res = m.like_screen_detected_cancer(data[i].t);
       else if (data[i].type == 3) res = m.like_interval_cancer(data[i].t);
       else res = Number(-1.0);
+      
+      if (age_lt > 1e-6) denom = m.like_neg_screening(age_lt);
     } 
     else if (model == 5) {
       std::vector<double> nodes_vec = as<std::vector<double>>(biom_pars["gh_nodes"]);
@@ -368,28 +354,23 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
         else cond_L = Number(-1.0);
         res += cond_L * Number(weights_vec[k] * 0.5641895835477563);
       }
+      
+      if (age_lt > 1e-6) {
+        denom = Number(0.0);
+        for(size_t k = 0; k < nodes_vec.size(); ++k) {
+          Number b0_k = nb_mu_b0 + nb_sigma_b0 * Number(1.4142135623730951 * nodes_vec[k]);
+          denom += m.like_neg_screening_cond(age_lt, b0_k) * Number(weights_vec[k] * 0.5641895835477563);
+        }
+      }
     }
     
     // ---------------------------------------------------------------
     // Left truncation adjustment (AD-aware: gradients flow through)
-    // Simple LT at general lt_date: divide by P(X u Y at age = (lt_date - dob)/365.25)
+    // Simple LT at general lt_date: divide by P(History <= age_lt AND No event by age_lt)
     // ---------------------------------------------------------------
-    if (left_trunc && lt_date > 0.0) {
-      double age_lt = (lt_date - data[i].dob) / 365.25;
-      Number denom(1.0);
-      if (age_lt > 0.0) {
-        Number trunc_error(0.0);
-        auto trunc_fn = [&](Number x_ad) -> Number {
-          double x = screening::as_double(x_ad);
-          return f1(x) * S2(age_lt - x);
-        };
-        denom = S1(age_lt) +
-          boost::math::quadrature::gauss_kronrod<Number, 15>::integrate(
-              trunc_fn, Number(0.0), Number(age_lt), 5, Number(tol), &trunc_error);
-      }
+    if (left_trunc && lt_date > 0.0 && age_lt > 1e-6) {
       res = res / denom;
     }
-
     
     res.propagateToStart();
     double l_val = res.value();
