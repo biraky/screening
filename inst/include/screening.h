@@ -865,7 +865,7 @@ public:
     
     // ---- NEW: simple LT at general lt_date ----
     // Divide by P(History <= t_o AND No event by t_o), where t_o = age at lt_date for subject i.
-    if (left_trunc && lt_date > 0.0) {
+    if (left_trunc && lt_date != 0.0) {
       double age_lt = (lt_date - data[i].dob) / 365.25;
       T_out denom(1.0);
       if (age_lt > 1e-6) {

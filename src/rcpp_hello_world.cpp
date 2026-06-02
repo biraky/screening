@@ -274,7 +274,7 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
     Number res(0.0);
     Number denom(1.0);
     double age_lt = 0.0;
-    if (left_trunc && lt_date > 0.0) {
+    if (left_trunc && lt_date != 0.0) {
       age_lt = (lt_date - data[i].dob) / 365.25;
     }
     
@@ -370,7 +370,7 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
     // Left truncation adjustment (AD-aware: gradients flow through)
     // Simple LT at general lt_date: divide by P(History <= age_lt AND No event by age_lt)
     // ---------------------------------------------------------------
-    if (left_trunc && lt_date > 0.0 && age_lt > 1e-6) {
+    if (left_trunc && lt_date != 0.0 && age_lt > 1e-6) {
       res = res / denom;
     }
     
