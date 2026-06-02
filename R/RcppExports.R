@@ -4,6 +4,7 @@
 #' State probability predictions for a screening model
 NULL
 
+#' @importFrom Rcpp sourceCpp 
 #' Compute Likelihoods for Screening Models
 #'
 #' @name screening_model_likes

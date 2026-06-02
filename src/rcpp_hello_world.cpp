@@ -9,6 +9,7 @@
 
 using namespace Rcpp;
 
+
 // -------------------------------------------------------------
 // Helper functions to safely extract list elements
 // -------------------------------------------------------------
@@ -26,6 +27,7 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
 // Unified Rcpp Export Function
 // -------------------------------------------------------------
 
+//' @importFrom Rcpp sourceCpp 
 //' Compute Likelihoods for Screening Models
 //'
 //' @name screening_model_likes
