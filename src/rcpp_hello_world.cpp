@@ -223,7 +223,7 @@ inline std::string get_s(const List& L, const char* name, std::string def = "") 
 #pragma omp parallel num_threads(n_threads)
 #endif
 {
-  cfaad::Tape local_tape;
+  thread_local cfaad::Tape local_tape;
   Number::tape = &local_tape;
   
 #ifdef _OPENMP
